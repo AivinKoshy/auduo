@@ -885,17 +885,21 @@ void UI::Render() {
     ImGui::Separator();
 
     // Footer actions (Aligned with Column A and Column B)
-    float colA_btnWidth = (colWidth - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+    float colA_btnWidth = (colWidth - ImGui::GetStyle().ItemSpacing.x * 2.0f) / 3.0f;
 
-    if (ImGui::Button("Test Audio Beep", ImVec2(colA_btnWidth, 0))) {
+    if (ImGui::Button("Test Beep", ImVec2(colA_btnWidth, 0))) {
         m_engine.PlayTestBeep();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Refresh Devices", ImVec2(colA_btnWidth, 0))) {
+    if (ImGui::Button("Refresh", ImVec2(colA_btnWidth, 0))) {
         RefreshDeviceList();
     }
+    ImGui::SameLine();
+    if (ImGui::Button("Minimize to Tray", ImVec2(colA_btnWidth, 0))) {
+        m_minimizeToTray = true;
+    }
 
-    // Column B footer controls: Checkbox and Minimize to Tray button
+    // Column B footer controls: Checkbox and Support / Donate button (standard button styling)
     ImGui::SameLine(colB_X);
     ImGui::AlignTextToFramePadding();
     if (ImGui::Checkbox("Always minimize to tray", &m_alwaysMinimizeToTray)) {
@@ -905,10 +909,13 @@ void UI::Render() {
         ImGui::SetTooltip("When checked, clicking the window close [X] button hides Auduo to the system tray instead of exiting.");
     }
 
-    const float minBtnWidth = 140.0f;
-    ImGui::SameLine(colB_X + colWidth - minBtnWidth);
-    if (ImGui::Button("Minimize to Tray", ImVec2(minBtnWidth, 0))) {
-        m_minimizeToTray = true;
+    const float donateBtnWidth = 140.0f;
+    ImGui::SameLine(colB_X + colWidth - donateBtnWidth);
+    if (ImGui::Button("Support / Donate", ImVec2(donateBtnWidth, 0))) {
+        OpenDonationPage();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Support AuDuo open-source development (UPI, Cards & International)");
     }
 
     ImGui::End();
