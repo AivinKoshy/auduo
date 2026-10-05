@@ -1,0 +1,26 @@
+# Build artifacts
+bin/
+build/
+dist/
+*.o
+*.obj
+*.exe
+*.dll
+*.pdb
+*.ilk
+
+# User config & local settings
+auduo_config.ini
+imgui.ini
+
+# Toolchain & temporary downloads
+tools/
+*.zip
+*.tar.gz
+
+# IDE and Editor files
+.vs/
+.vscode/
+*.user
+*.suo
+.idea/

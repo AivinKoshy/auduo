@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Support AuDuo &bull; Aivin Koshy</title>
+  <meta name="description" content="Support AuDuo open source development. Built with love by Aivin Koshy.">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="shortcut icon" href="favicon.ico">
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card-bg: #161b22;
+      --border: #30363d;
+      --text: #f0f6fc;
+      --text-muted: #8b949e;
+      --accent: #58a6ff;
+      --accent-hover: #1f6feb;
+      --card-hover: #21262d;
+      --success: #3fb950;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 32px 20px;
+    }
+    .container {
+      max-width: 540px;
+      width: 100%;
+      text-align: center;
+    }
+    .badge {
+      display: inline-block;
+      padding: 5px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      background: rgba(56, 139, 253, 0.12);
+      border: 1px solid rgba(56, 139, 253, 0.3);
+      border-radius: 999px;
+      margin-bottom: 20px;
+    }
+    h1 {
+      font-size: 32px;
+      font-weight: 700;
+      margin-bottom: 16px;
+      letter-spacing: -0.5px;
+    }
+    .story-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px;
+      text-align: left;
+      margin-bottom: 24px;
+      line-height: 1.65;
+      font-size: 15px;
+      color: #c9d1d9;
+      position: relative;
+    }
+    .story-card::before {
+      content: "“";
+      position: absolute;
+      top: 8px;
+      left: 14px;
+      font-size: 40px;
+      font-family: Georgia, serif;
+      color: var(--border);
+      line-height: 1;
+      pointer-events: none;
+    }
+    .story-card p {
+      position: relative;
+      z-index: 1;
+    }
+    .options-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px;
+      text-align: left;
+      transition: all 0.2s ease;
+      color: inherit;
+      text-decoration: none;
+      display: block;
+    }
+    .card.clickable:hover {
+      border-color: var(--accent);
+      background: var(--card-hover);
+      transform: translateY(-2px);
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .card-title {
+      font-size: 17px;
+      font-weight: 600;
+    }
+    .tag {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 9px;
+      border-radius: 6px;
+      background: #21262d;
+      color: var(--accent);
+      border: 1px solid var(--border);
+    }
+    .tag.green {
+      color: var(--success);
+      background: rgba(63, 185, 80, 0.1);
+      border-color: rgba(63, 185, 80, 0.25);
+    }
+    .card-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.45;
+    }
+    .upi-section {
+      text-align: center;
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(48, 54, 61, 0.6);
+    }
+    .qr-wrapper {
+      background: #ffffff;
+      padding: 10px;
+      border-radius: 12px;
+      display: inline-block;
+      margin: 10px auto;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    }
+    .qr-wrapper img {
+      width: 190px;
+      height: 190px;
+      display: block;
+    }
+    .upi-id-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #0d1117;
+      border: 1px solid var(--border);
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 15px;
+      color: #79c0ff;
+      user-select: all;
+      cursor: pointer;
+      margin-top: 6px;
+      transition: border-color 0.15s ease;
+    }
+    .upi-id-badge:hover {
+      border-color: var(--accent);
+    }
+    .copy-hint {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 6px;
+    }
+    .footer {
+      margin-top: 36px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .footer a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div style="margin-bottom: 16px;">
+      <img src="logo.png" alt="AuDuo Logo" width="84" height="84" style="image-rendering: pixelated; filter: drop-shadow(0 4px 12px rgba(0,0,0,0.5));">
+    </div>
+    <div class="badge">AuDuo &bull; Free & Open Source</div>
+    <h1>Support AuDuo</h1>
+
+    <!-- Personal Story / Note -->
+    <div class="story-card">
+      <p>
+        This project was built as opensource by someone that lost one too many opportunities to watch movies or listen to music together with friends and loved ones. I hope the audio flowing through this piece of code helps bring some comfort into this troubled world. If you appreciate my work or found it useful, please consider donating.
+      </p>
+    </div>
+
+    <div class="options-grid">
+      <!-- UPI Section -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">UPI (India)</span>
+        </div>
+        <p class="card-desc">Scan with any UPI app (Google Pay, PhonePe, Paytm, Navi, Cred, BHIM):</p>
+        
+        <div class="upi-section">
+          <div class="qr-wrapper">
+            <img src="upi_qr.png" alt="UPI QR Code for aivin@upi">
+          </div>
+          <br>
+          <div class="upi-id-badge" onclick="navigator.clipboard.writeText('aivin@upi'); alert('UPI ID copied to clipboard: aivin@upi');">
+            <span>aivin@upi</span>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="opacity: 0.7;">
+              <path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"></path>
+              <path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"></path>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- International / Dodo Payments Card -->
+      <div class="card" id="intl-card">
+        <div class="card-header">
+          <span class="card-title">International Cards & Apple Pay</span>
+          <span class="tag">Global</span>
+        </div>
+        <p class="card-desc">Credit/Debit Cards, Google Pay & Apple Pay for international supporters (powered securely by Dodo Payments).</p>
+        <p class="card-desc" style="margin-top: 8px; font-size: 12px; color: #d29922;">
+          &bull; Live checkout link activating soon.
+        </p>
+      </div>
+    </div>
+
+    <div class="footer">
+      AuDuo is released under <strong>GPLv3</strong> &bull; Back to <a href="https://github.com/AivinKoshy/auduo">GitHub Repository</a>
+    </div>
+  </div>
+</body>
+</html>
