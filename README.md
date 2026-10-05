@@ -60,12 +60,12 @@ By default, Windows doesn't allow streaming audio to two separate playback devic
 ### Quick Guide
 1. Launch `auduo.exe`.
 2. Select your first device under **Stream A** and your second device under **Stream B**.
-3. Turn the **Power** switch on.
+3. Click **START STREAMING**.
 4. Play any audio on your computer.
 5. If one device lags behind the other:
-   - Click **Chirp** to automatically detect and correct the delay using your mic, or
-   - Adjust the delay slider manually until both devices match.
-   - Click **Clapper** anytime to play a click sound and verify alignment by ear.
+   - Click **1-Click Auto-Sync** to automatically detect and correct the delay using your mic, or
+   - Adjust the **Sync Delay** slider on either stream manually until both devices match.
+   - Use the **Metronome Sync Clapper** anytime to play test clicks and verify alignment by ear.
 
 ---
 
@@ -108,7 +108,7 @@ Different devices often run at different sample rates (for example, one at 44.1 
 To fix the timing difference between fast devices (like a wired jack) and slower devices (like Bluetooth), AuDuo feeds Stream B through a circular memory buffer. This buffer holds the audio for a configurable amount of time (0 to 500 ms) before sending it to the second device, delaying the faster device so it matches the slower one.
 
 ### 4. Acoustic Auto-Calibration
-When you press the **Chirp** button, AuDuo outputs two distinct audio frequencies—one through Device A and one through Device B. It then listens through your default microphone, detects the arrival time of each sound, calculates the exact difference in milliseconds, and sets the delay buffer automatically.
+When you click **1-Click Auto-Sync**, AuDuo outputs two distinct audio frequencies—one through Device A and one through Device B. It then listens through your default microphone, detects the arrival time of each sound, calculates the exact difference in milliseconds, and sets the delay buffer automatically.
 
 ### 5. Windows Volume Integration
 AuDuo registers an audio endpoint volume callback with Windows. When you press volume up/down keys on your keyboard, AuDuo detects the change and adjusts its master volume to match.
