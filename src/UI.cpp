@@ -85,13 +85,47 @@ UI::UI(AudioEngine& engine)
 {
     RefreshDeviceList();
     RefreshInputDeviceList();
+
+    // Initialize default channel list (Stream A and Stream B)
+    m_channels.clear();
+    StreamChannel chanA;
+    chanA.label = "Stream A";
+    chanA.deviceIdx = m_selectedDeviceA;
+    if (m_selectedDeviceA >= 0 && m_selectedDeviceA < (int)m_devices.size()) {
+        chanA.deviceId = m_devices[m_selectedDeviceA].id;
+    }
+    chanA.volume = m_volA;
+    chanA.syncDelayMs = m_syncOffsetA;
+    chanA.pipeline = m_engine.GetPipelineA();
+    if (chanA.pipeline) chanA.pipeline->SetDeviceId(chanA.deviceId);
+    chanA.accentColor = ImVec4(0.4f, 0.8f, 1.0f, 1.0f); // Cool Cyan
+
+    StreamChannel chanB;
+    chanB.label = "Stream B";
+    chanB.deviceIdx = m_selectedDeviceB;
+    if (m_selectedDeviceB >= 0 && m_selectedDeviceB < (int)m_devices.size()) {
+        chanB.deviceId = m_devices[m_selectedDeviceB].id;
+    }
+    chanB.volume = m_volB;
+    chanB.syncDelayMs = m_syncOffsetB;
+    chanB.pipeline = m_engine.GetPipelineB();
+    if (chanB.pipeline) chanB.pipeline->SetDeviceId(chanB.deviceId);
+    chanB.accentColor = ImVec4(1.0f, 0.6f, 0.2f, 1.0f); // Warm Amber
+
+    m_channels.push_back(chanA);
+    m_channels.push_back(chanB);
+
     LoadConfig();
 
     if (!m_devices.empty()) {
-        if (m_selectedDeviceA >= 0 && m_selectedDeviceA < (int)m_devices.size()) {
+        if (!m_channels[0].deviceId.empty()) {
+            m_engine.SelectDeviceA(m_channels[0].deviceId);
+        } else if (m_selectedDeviceA >= 0 && m_selectedDeviceA < (int)m_devices.size()) {
             m_engine.SelectDeviceA(m_devices[m_selectedDeviceA].id);
         }
-        if (m_selectedDeviceB >= 0 && m_selectedDeviceB < (int)m_devices.size()) {
+        if (!m_channels[1].deviceId.empty()) {
+            m_engine.SelectDeviceB(m_channels[1].deviceId);
+        } else if (m_selectedDeviceB >= 0 && m_selectedDeviceB < (int)m_devices.size()) {
             m_engine.SelectDeviceB(m_devices[m_selectedDeviceB].id);
         }
     }
@@ -135,6 +169,12 @@ bool UI::Initialize(HWND hwnd, ID3D11Device* device, ID3D11DeviceContext* contex
     colors[ImGuiCol_FrameBg] = ImVec4(0.14f, 0.16f, 0.20f, 1.00f);
     colors[ImGuiCol_SliderGrab] = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
     colors[ImGuiCol_SliderGrabActive] = ImVec4(0.40f, 0.70f, 1.00f, 1.00f);
+    colors[ImGuiCol_ScrollbarBg] = ImVec4(0.06f, 0.07f, 0.09f, 0.65f);
+    colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.25f, 0.30f, 0.40f, 0.85f);
+    colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.35f, 0.45f, 0.60f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.45f, 0.60f, 0.80f, 1.00f);
+    style.ScrollbarSize = 12.0f;
+    style.ScrollbarRounding = 6.0f;
 
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(device, context);
@@ -164,12 +204,33 @@ void UI::RefreshDeviceList() {
     m_devices = AudioEngine::EnumerateOutputDevices();
     if (m_devices.empty()) return;
 
-    if (m_selectedDeviceA >= (int)m_devices.size()) {
-        m_selectedDeviceA = 0;
+    // Resynchronize deviceIdx for all channels from their deviceId
+    for (size_t i = 0; i < m_channels.size(); ++i) {
+        auto& chan = m_channels[i];
+        if (!chan.deviceId.empty()) {
+            bool found = false;
+            for (int d = 0; d < (int)m_devices.size(); ++d) {
+                if (m_devices[d].id == chan.deviceId) {
+                    chan.deviceIdx = d;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                chan.deviceIdx = -1; // Unplugged / Disconnected
+            }
+        } else {
+            if (chan.deviceIdx >= (int)m_devices.size()) {
+                chan.deviceIdx = (i < m_devices.size()) ? static_cast<int>(i) : 0;
+            }
+            if (chan.deviceIdx >= 0 && chan.deviceIdx < (int)m_devices.size()) {
+                chan.deviceId = m_devices[chan.deviceIdx].id;
+            }
+        }
+        if (i == 0) m_selectedDeviceA = chan.deviceIdx;
+        if (i == 1) m_selectedDeviceB = chan.deviceIdx;
     }
-    if (m_selectedDeviceB >= (int)m_devices.size() || m_selectedDeviceB == m_selectedDeviceA) {
-        m_selectedDeviceB = (m_devices.size() > 1) ? ((m_selectedDeviceA == 0) ? 1 : 0) : 0;
-    }
+
     RefreshInputDeviceList();
 }
 
@@ -239,9 +300,14 @@ void UI::LoadConfig(const std::string& filename) {
                 if (sizeNeeded > 0) {
                     std::wstring wId(sizeNeeded, 0);
                     MultiByteToWideChar(CP_UTF8, 0, val.c_str(), (int)val.size(), &wId[0], sizeNeeded);
+                    if (m_channels.size() > 0) {
+                        m_channels[0].deviceId = wId;
+                        if (m_channels[0].pipeline) m_channels[0].pipeline->SetDeviceId(wId);
+                    }
                     for (int i = 0; i < (int)m_devices.size(); ++i) {
                         if (m_devices[i].id == wId) {
                             m_selectedDeviceA = i;
+                            if (m_channels.size() > 0) m_channels[0].deviceIdx = i;
                             m_engine.SelectDeviceA(m_devices[i].id);
                             break;
                         }
@@ -253,9 +319,14 @@ void UI::LoadConfig(const std::string& filename) {
                 if (sizeNeeded > 0) {
                     std::wstring wId(sizeNeeded, 0);
                     MultiByteToWideChar(CP_UTF8, 0, val.c_str(), (int)val.size(), &wId[0], sizeNeeded);
+                    if (m_channels.size() > 1) {
+                        m_channels[1].deviceId = wId;
+                        if (m_channels[1].pipeline) m_channels[1].pipeline->SetDeviceId(wId);
+                    }
                     for (int i = 0; i < (int)m_devices.size(); ++i) {
                         if (m_devices[i].id == wId) {
                             m_selectedDeviceB = i;
+                            if (m_channels.size() > 1) m_channels[1].deviceIdx = i;
                             m_engine.SelectDeviceB(m_devices[i].id);
                             break;
                         }
@@ -280,8 +351,86 @@ void UI::LoadConfig(const std::string& filename) {
             else if (key == "mic_gain") m_engine.SetMicGain(std::clamp(std::stof(val), 0.1f, 20.0f));
             else if (key == "always_minimize_to_tray") m_alwaysMinimizeToTray = (val == "1");
             else if (key == "dont_show_donation") m_dontShowDonationAgain = (val == "1");
+            else if (key == "channels_count") {
+                int count = std::clamp(std::stoi(val), 2, 8);
+                static const ImVec4 s_accents[] = {
+                    ImVec4(0.40f, 0.90f, 0.60f, 1.0f), // Mint Green
+                    ImVec4(0.95f, 0.45f, 0.85f, 1.0f), // Magenta
+                    ImVec4(0.95f, 0.85f, 0.35f, 1.0f), // Gold
+                    ImVec4(0.45f, 0.65f, 1.00f, 1.0f)  // Azure
+                };
+                while ((int)m_channels.size() < count) {
+                    size_t chIdx = m_channels.size();
+                    char streamLetter = static_cast<char>('A' + chIdx);
+                    StreamChannel chan;
+                    chan.label = std::string("Stream ") + streamLetter;
+                    chan.deviceIdx = (m_devices.size() > chIdx) ? static_cast<int>(chIdx) : 0;
+                    if (chan.deviceIdx >= 0 && chan.deviceIdx < (int)m_devices.size()) {
+                        chan.deviceId = m_devices[chan.deviceIdx].id;
+                    }
+                    chan.volume = 0.80f;
+                    chan.syncDelayMs = 0;
+                    chan.accentColor = s_accents[(chIdx - 2) % 4];
+                    std::wstring wPipeName = L"STREAM " + std::wstring(1, streamLetter);
+                    chan.pipeline = std::make_shared<AudioPipeline>(wPipeName);
+                    chan.pipeline->SetDeviceId(chan.deviceId);
+                    m_engine.RegisterPipeline(chan.pipeline);
+                    m_channels.push_back(chan);
+                }
+            }
+            else if (key.rfind("chan_", 0) == 0) {
+                // Format: chan_<idx>_<prop>
+                size_t p1 = key.find('_', 5);
+                if (p1 != std::string::npos) {
+                    int cIdx = std::stoi(key.substr(5, p1 - 5));
+                    std::string prop = key.substr(p1 + 1);
+                    if (cIdx >= 2 && cIdx < (int)m_channels.size()) {
+                        if (prop == "vol") m_channels[cIdx].volume = std::clamp(std::stof(val), 0.0f, 1.0f);
+                        else if (prop == "delay") m_channels[cIdx].syncDelayMs = std::clamp(std::stoi(val), 0, 500);
+                        else if (prop == "dev_idx") m_channels[cIdx].deviceIdx = std::stoi(val);
+                        else if (prop == "dev_id") {
+                            int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, val.c_str(), (int)val.size(), NULL, 0);
+                            if (sizeNeeded > 0) {
+                                std::wstring wId(sizeNeeded, 0);
+                                MultiByteToWideChar(CP_UTF8, 0, val.c_str(), (int)val.size(), &wId[0], sizeNeeded);
+                                m_channels[cIdx].deviceId = wId;
+                                if (m_channels[cIdx].pipeline) {
+                                    m_channels[cIdx].pipeline->SetDeviceId(wId);
+                                }
+                                bool foundDev = false;
+                                for (int d = 0; d < (int)m_devices.size(); ++d) {
+                                    if (m_devices[d].id == wId) {
+                                        m_channels[cIdx].deviceIdx = d;
+                                        foundDev = true;
+                                        break;
+                                    }
+                                }
+                                if (!foundDev) {
+                                    m_channels[cIdx].deviceIdx = -1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         } catch (...) {
             // Ignore malformed individual config lines safely
+        }
+    }
+
+    if (m_channels.size() >= 2) {
+        m_channels[0].volume = m_volA;
+        m_channels[0].syncDelayMs = m_syncOffsetA;
+        m_channels[0].deviceIdx = m_selectedDeviceA;
+        if (m_selectedDeviceA >= 0 && m_selectedDeviceA < (int)m_devices.size()) {
+            m_channels[0].deviceId = m_devices[m_selectedDeviceA].id;
+        }
+
+        m_channels[1].volume = m_volB;
+        m_channels[1].syncDelayMs = m_syncOffsetB;
+        m_channels[1].deviceIdx = m_selectedDeviceB;
+        if (m_selectedDeviceB >= 0 && m_selectedDeviceB < (int)m_devices.size()) {
+            m_channels[1].deviceId = m_devices[m_selectedDeviceB].id;
         }
     }
 }
@@ -313,6 +462,18 @@ void UI::SaveConfig(const std::string& filename) {
         file << "mic_device_id=" << WStringToUTF8(m_inputDevices[m_selectedMicDevice].id) << "\n";
     }
     file << "mic_gain=" << m_engine.GetMicGain() << "\n";
+
+    file << "channels_count=" << m_channels.size() << "\n";
+    for (size_t i = 2; i < m_channels.size(); ++i) {
+        file << "chan_" << i << "_vol=" << m_channels[i].volume << "\n";
+        file << "chan_" << i << "_delay=" << m_channels[i].syncDelayMs << "\n";
+        file << "chan_" << i << "_dev_idx=" << m_channels[i].deviceIdx << "\n";
+        if (!m_channels[i].deviceId.empty()) {
+            file << "chan_" << i << "_dev_id=" << WStringToUTF8(m_channels[i].deviceId) << "\n";
+        } else if (m_channels[i].deviceIdx >= 0 && m_channels[i].deviceIdx < (int)m_devices.size()) {
+            file << "chan_" << i << "_dev_id=" << WStringToUTF8(m_devices[m_channels[i].deviceIdx].id) << "\n";
+        }
+    }
 }
 
 // Custom vector hardware LED widget (draws crisp circular LED with halo, bypassing font glyph issues)
@@ -356,8 +517,7 @@ void UI::Render() {
     ImGui::SetNextWindowSize(io.DisplaySize);
 
     ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                                   ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
-                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+                                   ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
 
     ImGui::Begin("AuduoMainWindow", nullptr, windowFlags);
 
@@ -387,18 +547,24 @@ void UI::Render() {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.75f, 0.32f, 1.0f));
         if (ImGui::Button("  START STREAMING  ", ImVec2(colWidth, streamBtnHeight))) {
             if (!m_devices.empty()) {
-                if (m_selectedDeviceA >= 0 && m_selectedDeviceA < (int)m_devices.size()) {
-                    m_engine.SelectDeviceA(m_devices[m_selectedDeviceA].id);
-                }
-                if (m_selectedDeviceB >= 0 && m_selectedDeviceB < (int)m_devices.size()) {
-                    m_engine.SelectDeviceB(m_devices[m_selectedDeviceB].id);
+                for (size_t i = 0; i < m_channels.size(); ++i) {
+                    if (m_channels[i].deviceIdx >= 0 && m_channels[i].deviceIdx < (int)m_devices.size()) {
+                        m_channels[i].deviceId = m_devices[m_channels[i].deviceIdx].id;
+                    }
+                    if (i == 0 && !m_channels[i].deviceId.empty()) {
+                        m_engine.SelectDeviceA(m_channels[i].deviceId);
+                    } else if (i == 1 && !m_channels[i].deviceId.empty()) {
+                        m_engine.SelectDeviceB(m_channels[i].deviceId);
+                    } else if (m_channels[i].pipeline && !m_channels[i].deviceId.empty()) {
+                        m_channels[i].pipeline->SetDeviceId(m_channels[i].deviceId);
+                    }
+                    if (m_channels[i].pipeline) {
+                        m_channels[i].pipeline->SetVolume(m_channels[i].volume);
+                        m_channels[i].pipeline->SetDelayMs(m_channels[i].syncDelayMs);
+                    }
                 }
             }
             m_engine.SetMirrorSystemAudio(true);
-            m_engine.GetPipelineA()->SetVolume(m_volA);
-            m_engine.GetPipelineB()->SetVolume(m_volB);
-            m_engine.GetPipelineA()->SetDelayMs(m_syncOffsetA);
-            m_engine.GetPipelineB()->SetDelayMs(m_syncOffsetB);
             m_engine.StartStreaming();
         }
         ImGui::PopStyleColor(2);
@@ -448,6 +614,25 @@ void UI::Render() {
     if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastVolCheck).count() > 30) {
         lastVolCheck = now;
         m_engine.UpdateWindowsVolumeSync();
+        float master = m_engine.IsMuted() ? 0.0f : m_engine.GetMasterVolume();
+        for (size_t i = 2; i < m_channels.size(); ++i) {
+            if (m_channels[i].pipeline) m_channels[i].pipeline->SetMasterVolume(master);
+        }
+    }
+
+    // Periodic Device Reconnect Watchdog (every 2 seconds if streaming is active)
+    static auto lastReconnectCheck = std::chrono::steady_clock::now();
+    if (m_engine.IsStreaming() && std::chrono::duration_cast<std::chrono::seconds>(now - lastReconnectCheck).count() >= 2) {
+        lastReconnectCheck = now;
+        for (auto& chan : m_channels) {
+            if (chan.pipeline && !chan.pipeline->IsRunning() && !chan.deviceId.empty()) {
+                chan.pipeline->Initialize(chan.deviceId);
+                float master = m_engine.IsMuted() ? 0.0f : m_engine.GetMasterVolume();
+                chan.pipeline->SetMasterVolume(master);
+                chan.pipeline->SetVolume(chan.volume);
+                chan.pipeline->SetDelayMs(chan.syncDelayMs);
+            }
+        }
     }
 
     // Master Volume Bar aligned with Column A
@@ -462,11 +647,9 @@ void UI::Render() {
         m_masterVol = masterPercent / 100.0f;
         m_engine.SetMasterVolume(m_masterVol);
     }
-    ImGui::SameLine();
     if (m_engine.IsMuted()) {
+        ImGui::SameLine();
         ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "[MUTED]");
-    } else {
-        ImGui::TextDisabled("(%d%%)", masterPercent);
     }
 
     // Checkbox aligned directly with Column B
@@ -480,119 +663,259 @@ void UI::Render() {
 
     ImGui::Separator();
 
-    // Twin Channel Panels (Stream A & Stream B)
-    const float panelHeight = 260.0f;
-    ImGuiWindowFlags childFlags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+    // Dynamic Streams Region Height:
+    // Snugly wraps stream cards when few channels exist (no dead gap),
+    // and scrolls smoothly when extra streams exceed available space.
+    const float panelHeight = 114.0f;
+    const float addBtnHeight = 28.0f;
+    const float itemSpacingY = ImGui::GetStyle().ItemSpacing.y;
+    const float footerReservedHeight = 200.0f;
 
-    // Stream A Panel
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 12.0f));
-    ImGui::BeginChild("StreamA_Panel", ImVec2(colWidth, panelHeight), true, childFlags);
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Stream A");
-    if (m_engine.GetPipelineA() && m_engine.GetPipelineA()->HasDeviceError()) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), " [DISCONNECTED]");
-    } else if (!m_devices.empty() && m_selectedDeviceA >= 0 && m_selectedDeviceA < (int)m_devices.size() && m_devices[m_selectedDeviceA].isDefault) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.35f, 0.75f, 1.0f, 0.85f), " [Win Default Passthrough]");
-    }
-    ImGui::Separator();
+    float neededStreamsHeight = m_channels.size() * (panelHeight + itemSpacingY) + addBtnHeight + itemSpacingY;
+    float maxStreamsHeight = ImGui::GetContentRegionAvail().y - footerReservedHeight;
+    if (maxStreamsHeight < 120.0f) maxStreamsHeight = 120.0f;
 
-    ImGui::Text("Output Device (OUT):");
-    ImGui::SetNextItemWidth(-1.0f);
-    std::string curDevA = m_devices.empty() ? "None" : (WStringToUTF8(m_devices[m_selectedDeviceA].name) + (m_devices[m_selectedDeviceA].isDefault ? " [WIN DEFAULT]" : ""));
-    if (ImGui::BeginCombo("##DeviceA", curDevA.c_str())) {
-        for (int i = 0; i < (int)m_devices.size(); ++i) {
-            bool isSelected = (m_selectedDeviceA == i);
-            std::string dName = WStringToUTF8(m_devices[i].name) + (m_devices[i].isDefault ? " [WIN DEFAULT]" : "") + (m_devices[i].isBluetooth ? " [BT]" : "");
-            if (ImGui::Selectable(dName.c_str(), isSelected)) {
-                m_selectedDeviceA = i;
-                m_engine.SelectDeviceA(m_devices[i].id);
-                SaveConfig();
+    float streamAreaHeight = (std::min)(neededStreamsHeight, maxStreamsHeight);
+
+    // Dedicated Scrollable Streams Region (Header & Footer remain pinned)
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::BeginChild("StreamsScrollRegion", ImVec2(0, streamAreaHeight), false, ImGuiWindowFlags_None);
+
+    const float fullWidth = ImGui::GetContentRegionAvail().x;
+    const float labelW = 68.0f;
+    const float barHeight = ImGui::GetFrameHeight();
+
+    int channelToRemove = -1;
+
+    for (size_t chIdx = 0; chIdx < m_channels.size(); ++chIdx) {
+        auto& chan = m_channels[chIdx];
+        std::string panelId = "StreamPanel_" + std::to_string(chIdx);
+
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.14f, 0.18f, 0.75f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.24f, 0.28f, 0.38f, 0.65f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 8.0f));
+        // Explicitly lock cards: NO internal scrollbar, NO mouse-wheel scroll capture
+        ImGuiWindowFlags cardFlags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+        ImGui::BeginChild(panelId.c_str(), ImVec2(fullWidth, panelHeight), true, cardFlags);
+
+        // Header Row: Stream Title, Status, and Remove Button (for streams beyond 2)
+        ImGui::TextColored(chan.accentColor, "%s", chan.label.c_str());
+
+        bool hasErr = (chan.pipeline && (chan.pipeline->HasDeviceError() || (m_engine.IsStreaming() && !chan.pipeline->IsRunning())));
+        // Only Channel 0 can be the Windows Default Passthrough mirror
+        bool isDefault = (chIdx == 0 && !m_devices.empty() && chan.deviceIdx >= 0 && chan.deviceIdx < (int)m_devices.size() && m_devices[chan.deviceIdx].isDefault);
+        if (hasErr) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), " [DISCONNECTED]");
+        } else if (isDefault) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.35f, 0.75f, 1.0f, 0.85f), " [Win Default Passthrough]");
+        }
+
+        // Allow removing custom extra channels (channels beyond standard A and B)
+        if (chIdx >= 2) {
+            ImGui::SameLine(fullWidth - 28.0f);
+            float btnY = ImGui::GetCursorPosY() - 2.0f;
+            ImGui::SetCursorPosY(btnY);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.32f, 0.12f, 0.14f, 0.60f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.22f, 0.22f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.98f, 0.10f, 0.10f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.88f, 0.88f, 0.88f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
+            std::string remId = "x##Rem" + std::to_string(chIdx);
+            if (ImGui::Button(remId.c_str(), ImVec2(20, 20))) {
+                channelToRemove = static_cast<int>(chIdx);
+            }
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor(4);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Remove this stream output");
             }
         }
-        ImGui::EndCombo();
-    }
 
-    ImGui::Text("Volume: %.0f%%", m_volA * 100.0f);
-    ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::SliderFloat("##VolA", &m_volA, 0.0f, 1.0f, "")) {
-        m_engine.GetPipelineA()->SetVolume(m_volA);
-        SaveConfig();
-    }
+        ImGui::Spacing();
 
-    ImGui::Spacing();
-    float vuA = m_engine.GetPipelineA()->GetPeakVU();
-    ImGui::Text("Live VU:");
-    ImGui::SameLine();
-    ImGui::ProgressBar(vuA, ImVec2(-1.0f, 14), "");
+        std::string gridId = "Grid_" + std::to_string(chIdx);
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(8.0f, 3.0f));
+        if (ImGui::BeginTable(gridId.c_str(), 2, ImGuiTableFlags_None)) {
+            ImGui::TableSetupColumn("Col_Left", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Col_Right", ImGuiTableColumnFlags_WidthStretch);
 
-    ImGui::Spacing();
-    ImGui::Text("Sync Delay: +%d ms", m_syncOffsetA);
-    ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::SliderInt("##SyncA", &m_syncOffsetA, 0, 500, "%d ms")) {
-        m_engine.GetPipelineA()->SetDelayMs(m_syncOffsetA);
-        SaveConfig();
-    }
+            // Row 1: Output Device (Left) | Volume (Right)
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("Device:");
+            ImGui::SameLine(labelW);
+            ImGui::SetNextItemWidth(-1.0f);
+            std::string curDev = (m_devices.empty() || chan.deviceIdx < 0 || chan.deviceIdx >= (int)m_devices.size())
+                                     ? "None"
+                                     : (WStringToUTF8(m_devices[chan.deviceIdx].name) + (m_devices[chan.deviceIdx].isDefault ? " [WIN DEFAULT]" : ""));
+            std::string comboId = "##DevCombo_" + std::to_string(chIdx);
+            if (ImGui::BeginCombo(comboId.c_str(), curDev.c_str())) {
+                for (int d = 0; d < (int)m_devices.size(); ++d) {
+                    bool isSelected = (chan.deviceIdx == d);
+                    std::string dName = WStringToUTF8(m_devices[d].name) + (m_devices[d].isDefault ? " [WIN DEFAULT]" : "") + (m_devices[d].isBluetooth ? " [BT]" : "");
+                    if (ImGui::Selectable(dName.c_str(), isSelected)) {
+                        chan.deviceIdx = d;
+                        chan.deviceId = m_devices[d].id;
+                        if (chIdx == 0) {
+                            m_selectedDeviceA = d;
+                            m_engine.SelectDeviceA(m_devices[d].id);
+                        } else if (chIdx == 1) {
+                            m_selectedDeviceB = d;
+                            m_engine.SelectDeviceB(m_devices[d].id);
+                        } else {
+                            m_engine.SelectPipelineDevice(chan.pipeline, m_devices[d].id);
+                        }
+                        SaveConfig();
+                    }
+                }
+                ImGui::EndCombo();
+            }
 
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
-
-    ImGui::SameLine(colB_X);
-
-    // Stream B Panel
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 12.0f));
-    ImGui::BeginChild("StreamB_Panel", ImVec2(colWidth, panelHeight), true, childFlags);
-    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "Stream B");
-    if (m_engine.GetPipelineB() && m_engine.GetPipelineB()->HasDeviceError()) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), " [DISCONNECTED]");
-    } else if (!m_devices.empty() && m_selectedDeviceB >= 0 && m_selectedDeviceB < (int)m_devices.size() && m_devices[m_selectedDeviceB].isDefault) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.35f, 0.75f, 1.0f, 0.85f), " [Win Default Passthrough]");
-    }
-    ImGui::Separator();
-
-    ImGui::Text("Output Device (OUT):");
-    ImGui::SetNextItemWidth(-1.0f);
-    std::string curDevB = m_devices.empty() ? "None" : (WStringToUTF8(m_devices[m_selectedDeviceB].name) + (m_devices[m_selectedDeviceB].isDefault ? " [WIN DEFAULT]" : ""));
-    if (ImGui::BeginCombo("##DeviceB", curDevB.c_str())) {
-        for (int i = 0; i < (int)m_devices.size(); ++i) {
-            bool isSelected = (m_selectedDeviceB == i);
-            std::string dName = WStringToUTF8(m_devices[i].name) + (m_devices[i].isDefault ? " [WIN DEFAULT]" : "") + (m_devices[i].isBluetooth ? " [BT]" : "");
-            if (ImGui::Selectable(dName.c_str(), isSelected)) {
-                m_selectedDeviceB = i;
-                m_engine.SelectDeviceB(m_devices[i].id);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("Volume:");
+            ImGui::SameLine(labelW);
+            ImGui::SetNextItemWidth(-1.0f);
+            std::string volId = "##Vol_" + std::to_string(chIdx);
+            int volPercent = static_cast<int>(std::round(chan.volume * 100.0f));
+            ImGui::PushStyleColor(ImGuiCol_SliderGrab, chan.accentColor);
+            ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, ImVec4(chan.accentColor.x * 1.15f, chan.accentColor.y * 1.15f, chan.accentColor.z * 1.15f, 1.0f));
+            if (ImGui::SliderInt(volId.c_str(), &volPercent, 0, 100, "%d%%")) {
+                chan.volume = volPercent / 100.0f;
+                if (chIdx == 0) m_volA = chan.volume;
+                if (chIdx == 1) m_volB = chan.volume;
+                if (chan.pipeline) chan.pipeline->SetVolume(chan.volume);
                 SaveConfig();
             }
+            ImGui::PopStyleColor(2);
+
+            // Row 2: Live VU (Left) | Sync Delay (Right)
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("Live VU:");
+            ImGui::SameLine(labelW);
+            float vu = chan.pipeline ? chan.pipeline->GetPeakVU() : 0.0f;
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, chan.accentColor);
+            ImGui::ProgressBar(vu, ImVec2(-1.0f, barHeight), "");
+            ImGui::PopStyleColor();
+
+            ImGui::TableSetColumnIndex(1);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("Delay:");
+            ImGui::SameLine(labelW);
+            ImGui::SetNextItemWidth(-1.0f);
+            std::string delayId = "##Delay_" + std::to_string(chIdx);
+            ImGui::PushStyleColor(ImGuiCol_SliderGrab, chan.accentColor);
+            ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, ImVec4(chan.accentColor.x * 1.15f, chan.accentColor.y * 1.15f, chan.accentColor.z * 1.15f, 1.0f));
+            if (ImGui::SliderInt(delayId.c_str(), &chan.syncDelayMs, 0, 500, "+%d ms")) {
+                if (chIdx == 0) m_syncOffsetA = chan.syncDelayMs;
+                if (chIdx == 1) m_syncOffsetB = chan.syncDelayMs;
+                if (chan.pipeline) chan.pipeline->SetDelayMs(chan.syncDelayMs);
+                SaveConfig();
+            }
+            ImGui::PopStyleColor(2);
+
+            ImGui::EndTable();
         }
-        ImGui::EndCombo();
+        ImGui::PopStyleVar(); // CellPadding
+
+        ImGui::EndChild();
+        ImGui::PopStyleVar(3); // ChildRounding, ChildBorderSize, WindowPadding
+        ImGui::PopStyleColor(2); // ChildBg, Border
     }
 
-    ImGui::Text("Volume: %.0f%%", m_volB * 100.0f);
-    ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::SliderFloat("##VolB", &m_volB, 0.0f, 1.0f, "")) {
-        m_engine.GetPipelineB()->SetVolume(m_volB);
+    // Handle channel removal if requested
+    if (channelToRemove >= 2 && channelToRemove < (int)m_channels.size()) {
+        if (m_channels[channelToRemove].pipeline) {
+            m_engine.UnregisterPipeline(m_channels[channelToRemove].pipeline);
+            m_channels[channelToRemove].pipeline->Shutdown();
+        }
+        m_channels.erase(m_channels.begin() + channelToRemove);
         SaveConfig();
     }
 
-    ImGui::Spacing();
-    float vuB = m_engine.GetPipelineB()->GetPeakVU();
-    ImGui::Text("Live VU:");
-    ImGui::SameLine();
-    ImGui::ProgressBar(vuB, ImVec2(-1.0f, 14), "");
+    // Centered, sleek "+ Add Stream Device" Pill Button inside scroll region
+    const float addBtnWidth = 176.0f;
+    ImGui::SetCursorPosX((fullWidth - addBtnWidth) * 0.5f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 14.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.22f, 0.32f, 0.85f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.40f, 0.65f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.48f, 0.90f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.32f, 0.50f, 0.75f, 0.75f));
 
-    ImGui::Spacing();
-    ImGui::Text("Sync Delay: +%d ms", m_syncOffsetB);
-    ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::SliderInt("##SyncB", &m_syncOffsetB, 0, 500, "%d ms")) {
-        m_engine.GetPipelineB()->SetDelayMs(m_syncOffsetB);
-        SaveConfig();
+    bool addTriggered = ImGui::Button("+  Add Stream Device", ImVec2(addBtnWidth, addBtnHeight));
+    if (!addTriggered && (ImGui::IsKeyPressed(ImGuiKey_Equal) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd))) {
+        addTriggered = true;
     }
 
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
+    if (addTriggered) {
+        char streamLetter = static_cast<char>('A' + m_channels.size());
+        StreamChannel newChan;
+        newChan.label = std::string("Stream ") + streamLetter;
 
-    ImGui::Spacing();
+        // Pick the first available device that is not currently assigned to another channel
+        int chosenDevice = 0;
+        for (int d = 0; d < (int)m_devices.size(); ++d) {
+            bool inUse = false;
+            for (const auto& ch : m_channels) {
+                if (ch.deviceIdx == d) {
+                    inUse = true;
+                    break;
+                }
+            }
+            if (!inUse) {
+                chosenDevice = d;
+                break;
+            }
+        }
+        newChan.deviceIdx = chosenDevice;
+        if (!m_devices.empty() && chosenDevice >= 0 && chosenDevice < (int)m_devices.size()) {
+            newChan.deviceId = m_devices[chosenDevice].id;
+        }
+        newChan.volume = 0.80f;
+        newChan.syncDelayMs = 0;
+
+        // Distinct stylish accent colors for additional streams
+        static const ImVec4 s_accents[] = {
+            ImVec4(0.40f, 0.90f, 0.60f, 1.0f), // Mint Green
+            ImVec4(0.95f, 0.45f, 0.85f, 1.0f), // Magenta
+            ImVec4(0.95f, 0.85f, 0.35f, 1.0f), // Gold
+            ImVec4(0.45f, 0.65f, 1.00f, 1.0f)  // Azure
+        };
+        size_t colorIdx = (m_channels.size() - 2) % 4;
+        newChan.accentColor = s_accents[colorIdx];
+
+        std::wstring wPipeName = L"STREAM " + std::wstring(1, streamLetter);
+        newChan.pipeline = std::make_shared<AudioPipeline>(wPipeName);
+        newChan.pipeline->SetDeviceId(newChan.deviceId);
+        newChan.pipeline->SetVolume(newChan.volume);
+        newChan.pipeline->SetDelayMs(newChan.syncDelayMs);
+        m_engine.RegisterPipeline(newChan.pipeline);
+        if (m_engine.IsStreaming() && !newChan.deviceId.empty()) {
+            m_engine.SelectPipelineDevice(newChan.pipeline, newChan.deviceId);
+            newChan.pipeline->SetVolume(newChan.volume);
+            newChan.pipeline->SetDelayMs(newChan.syncDelayMs);
+        }
+        m_channels.push_back(newChan);
+        SaveConfig();
+    }
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar(2);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Add an additional synchronized audio output stream device (Stream C, D, ...)\nShortcut: '+' key");
+    }
+
+    ImGui::EndChild(); // End of StreamsScrollRegion
+    ImGui::PopStyleVar(); // WindowPadding for StreamsScrollRegion
+
     ImGui::Separator();
 
     // Latency Calibration Section (Item 7)

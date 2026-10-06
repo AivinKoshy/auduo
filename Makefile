@@ -31,7 +31,7 @@ $(TARGET): $(OBJ)
 build/resource.o: resources/auduo.rc resources/auduo.exe.manifest
 	$(WINDRES) -I. -Iresources resources/auduo.rc -o $@
 
-build/%.o: src/%.cpp
+build/%.o: src/%.cpp include/*.hpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 build/imgui.o: third_party/imgui/imgui.cpp

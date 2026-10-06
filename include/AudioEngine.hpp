@@ -49,6 +49,7 @@ public:
     bool IsRunning() const { return m_running.load(std::memory_order_relaxed); }
     bool HasDeviceError() const { return m_deviceError.load(std::memory_order_relaxed); }
 
+    void SetDeviceId(const std::wstring& id) { m_deviceId = id; }
     const std::wstring& GetDeviceId() const { return m_deviceId; }
     const std::wstring& GetName() const { return m_name; }
 
@@ -66,6 +67,7 @@ private:
     std::atomic<float> m_masterVolume{1.0f};
     std::atomic<int> m_delayMs{0};
     bool m_autoSync{false};
+    bool m_isEventDriven{true};
 
     StreamMetrics m_metrics;
     std::thread m_renderThread;
@@ -110,6 +112,7 @@ public:
 
     void SelectDeviceA(const std::wstring& deviceId);
     void SelectDeviceB(const std::wstring& deviceId);
+    void SelectPipelineDevice(std::shared_ptr<AudioPipeline> pipeline, const std::wstring& deviceId);
     const std::wstring& GetDeviceIdA() const { return m_deviceIdA; }
     const std::wstring& GetDeviceIdB() const { return m_deviceIdB; }
 
@@ -118,6 +121,12 @@ public:
 
     std::shared_ptr<AudioPipeline> GetPipelineA() { return m_pipelineA; }
     std::shared_ptr<AudioPipeline> GetPipelineB() { return m_pipelineB; }
+
+    // Dynamic Multi-Device Pipeline Support (N-devices)
+    void RegisterPipeline(std::shared_ptr<AudioPipeline> pipeline);
+    void UnregisterPipeline(std::shared_ptr<AudioPipeline> pipeline);
+    void ClearExtraPipelines();
+    std::vector<std::shared_ptr<AudioPipeline>> GetExtraPipelines() const;
 
     // Play high-precision synchronized test chime across both channels
     void PlayTestBeep();
@@ -218,6 +227,9 @@ private:
     std::atomic<float> m_masterVolume{1.0f};
     std::atomic<bool> m_syncWithWindowsVolume{true};
     std::atomic<bool> m_isMuted{false};
+
+    mutable std::mutex m_extraPipelinesMutex;
+    std::vector<std::shared_ptr<AudioPipeline>> m_extraPipelines;
 
     void AttachWindowsVolumeEndpoint();
     void DetachWindowsVolumeEndpoint();

@@ -105,10 +105,16 @@ bool AudioPipeline::Initialize(const std::wstring& endpointDeviceId) {
         return false;
     }
 
-    hr = m_pDevice->Activate(
-        __uuidof(IAudioClient), CLSCTX_ALL, NULL, (void**)&m_pAudioClient
-    );
-    if (FAILED(hr) || !m_pAudioClient) {
+    auto ActivateAudioClient = [&]() -> bool {
+        if (m_pAudioClient) {
+            m_pAudioClient->Release();
+            m_pAudioClient = nullptr;
+        }
+        HRESULT actHr = m_pDevice->Activate(__uuidof(IAudioClient), CLSCTX_ALL, NULL, (void**)&m_pAudioClient);
+        return SUCCEEDED(actHr) && m_pAudioClient != nullptr;
+    };
+
+    if (!ActivateAudioClient()) {
         Shutdown();
         return false;
     }
@@ -119,42 +125,92 @@ bool AudioPipeline::Initialize(const std::wstring& endpointDeviceId) {
         return false;
     }
 
-    // Standard requested buffer: 40ms for high stability over Bluetooth
-    REFERENCE_TIME hnsRequestedDuration = 400000; // 40ms in 100ns units
+    m_hRenderEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    bool initialized = false;
+    m_isEventDriven = true;
 
+    // Tier 1: Event-driven Shared Mode with default engine quantum (hnsBufferDuration = 0) and AutoConvertPCM
     hr = m_pAudioClient->Initialize(
         AUDCLNT_SHAREMODE_SHARED,
         AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
-        hnsRequestedDuration,
+        0,
         0,
         m_pwfx,
         NULL
     );
 
-    if (FAILED(hr)) {
-        // Fallback without special stream flags if needed
+    // Tier 2: Event-driven Shared Mode with default buffer size (0) without AutoConvertPCM
+    if (FAILED(hr) && hr != AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED) {
+        ActivateAudioClient();
         hr = m_pAudioClient->Initialize(
             AUDCLNT_SHAREMODE_SHARED,
             AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-            hnsRequestedDuration,
+            0,
             0,
             m_pwfx,
             NULL
         );
     }
-    if (FAILED(hr)) {
-        Shutdown();
-        return false;
+
+    // Tier 3: Handle AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED if specific alignment required
+    if (hr == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED) {
+        UINT32 alignedFrames = 0;
+        if (SUCCEEDED(m_pAudioClient->GetBufferSize(&alignedFrames)) && alignedFrames > 0 && m_pwfx->nSamplesPerSec > 0) {
+            REFERENCE_TIME alignedDuration = static_cast<REFERENCE_TIME>(
+                (10000000.0 / m_pwfx->nSamplesPerSec) * alignedFrames + 0.5
+            );
+            ActivateAudioClient();
+            hr = m_pAudioClient->Initialize(
+                AUDCLNT_SHAREMODE_SHARED,
+                AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                alignedDuration,
+                0,
+                m_pwfx,
+                NULL
+            );
+        }
     }
 
-    m_hRenderEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
-    if (!m_hRenderEvent) {
-        Shutdown();
-        return false;
+    if (SUCCEEDED(hr) && m_hRenderEvent) {
+        hr = m_pAudioClient->SetEventHandle(m_hRenderEvent);
+        if (SUCCEEDED(hr)) {
+            initialized = true;
+        }
     }
 
-    hr = m_pAudioClient->SetEventHandle(m_hRenderEvent);
-    if (FAILED(hr)) {
+    // Tier 4: Fallback to Polling/Timer-driven mode if event callback is not supported by driver
+    if (!initialized) {
+        m_isEventDriven = false;
+        if (m_hRenderEvent) {
+            CloseHandle(m_hRenderEvent);
+            m_hRenderEvent = NULL;
+        }
+        ActivateAudioClient();
+        hr = m_pAudioClient->Initialize(
+            AUDCLNT_SHAREMODE_SHARED,
+            AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
+            0,
+            0,
+            m_pwfx,
+            NULL
+        );
+        if (FAILED(hr)) {
+            ActivateAudioClient();
+            hr = m_pAudioClient->Initialize(
+                AUDCLNT_SHAREMODE_SHARED,
+                0,
+                0,
+                0,
+                m_pwfx,
+                NULL
+            );
+        }
+        if (SUCCEEDED(hr)) {
+            initialized = true;
+        }
+    }
+
+    if (!initialized) {
         Shutdown();
         return false;
     }
@@ -276,6 +332,7 @@ void AudioPipeline::RenderLoop() {
     hr = m_pAudioClient->Start();
     if (FAILED(hr)) {
         m_deviceError.store(true, std::memory_order_relaxed);
+        m_running.store(false, std::memory_order_relaxed);
         if (hAvrt) AvRevertMmThreadCharacteristics(hAvrt);
         CoUninitialize();
         return;
@@ -284,10 +341,16 @@ void AudioPipeline::RenderLoop() {
     std::vector<float> stagingBuffer;
 
     while (m_running.load(std::memory_order_relaxed)) {
-        DWORD waitRes = WaitForSingleObject(m_hRenderEvent, 500);
-        if (waitRes != WAIT_OBJECT_0) {
+        if (m_isEventDriven && m_hRenderEvent) {
+            DWORD waitRes = WaitForSingleObject(m_hRenderEvent, 50);
+            if (waitRes != WAIT_OBJECT_0) {
+                if (!m_running.load(std::memory_order_relaxed)) break;
+                continue;
+            }
+        } else {
+            // Polling mode fallback: sleep 10ms (standard Windows WASAPI audio engine quantum)
+            Sleep(10);
             if (!m_running.load(std::memory_order_relaxed)) break;
-            continue;
         }
 
         UINT32 padding = 0;
@@ -310,6 +373,10 @@ void AudioPipeline::RenderLoop() {
 
         stagingBuffer.resize(framesNeeded * 2);
         size_t framesRead = m_ringBuffer.Read(stagingBuffer.data(), framesNeeded);
+        if (framesRead < framesNeeded) {
+            // Zero-fill unread frames to guarantee absolute silence and prevent noise repetition
+            std::fill(stagingBuffer.begin() + framesRead * 2, stagingBuffer.end(), 0.0f);
+        }
 
         float mVol = WindowsVolumeScalarToGain(m_masterVolume.load(std::memory_order_relaxed));
         float cVol = WindowsVolumeScalarToGain(m_volume.load(std::memory_order_relaxed));
@@ -331,13 +398,19 @@ void AudioPipeline::RenderLoop() {
         m_metrics.peakVU.store(peak, std::memory_order_relaxed);
 
         // Copy into WASAPI render buffer
-        // Note: Assuming IEEE Float 32-bit format (Standard WASAPI shared mix format)
+        // Note: Standard WASAPI shared mix format
         if (m_pwfx->wFormatTag == WAVE_FORMAT_IEEE_FLOAT ||
             (m_pwfx->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
              reinterpret_cast<WAVEFORMATEXTENSIBLE*>(m_pwfx)->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT)) {
             
             if (m_pwfx->nChannels == 2) {
                 std::memcpy(pData, stagingBuffer.data(), framesNeeded * 2 * sizeof(float));
+            } else if (m_pwfx->nChannels == 1) {
+                // Mono downmix
+                float* pOut = reinterpret_cast<float*>(pData);
+                for (UINT32 f = 0; f < framesNeeded; ++f) {
+                    pOut[f] = (stagingBuffer[f * 2 + 0] + stagingBuffer[f * 2 + 1]) * 0.5f;
+                }
             } else {
                 // Multi-channel upmix (e.g. 5.1/7.1 to stereo output)
                 float* pOut = reinterpret_cast<float*>(pData);
@@ -355,10 +428,16 @@ void AudioPipeline::RenderLoop() {
             // PCM 16-bit fallback
             int16_t* pOut = reinterpret_cast<int16_t*>(pData);
             for (size_t f = 0; f < framesNeeded; ++f) {
-                for (uint32_t ch = 0; ch < m_pwfx->nChannels; ++ch) {
-                    float s = (ch < 2) ? stagingBuffer[f * 2 + ch] : 0.0f;
+                if (m_pwfx->nChannels == 1) {
+                    float s = (stagingBuffer[f * 2 + 0] + stagingBuffer[f * 2 + 1]) * 0.5f;
                     float sample = (std::max)(-1.0f, (std::min)(1.0f, s));
-                    pOut[f * m_pwfx->nChannels + ch] = static_cast<int16_t>(sample * 32767.0f);
+                    pOut[f] = static_cast<int16_t>(sample * 32767.0f);
+                } else {
+                    for (uint32_t ch = 0; ch < m_pwfx->nChannels; ++ch) {
+                        float s = (ch < 2) ? stagingBuffer[f * 2 + ch] : 0.0f;
+                        float sample = (std::max)(-1.0f, (std::min)(1.0f, s));
+                        pOut[f * m_pwfx->nChannels + ch] = static_cast<int16_t>(sample * 32767.0f);
+                    }
                 }
             }
         } else if (m_pwfx->wBitsPerSample == 24 && m_pwfx->nChannels > 0 && (m_pwfx->nBlockAlign / m_pwfx->nChannels == 3)) {
@@ -366,7 +445,9 @@ void AudioPipeline::RenderLoop() {
             uint8_t* pOut = reinterpret_cast<uint8_t*>(pData);
             for (size_t f = 0; f < framesNeeded; ++f) {
                 for (uint32_t ch = 0; ch < m_pwfx->nChannels; ++ch) {
-                    float s = (ch < 2) ? stagingBuffer[f * 2 + ch] : 0.0f;
+                    float s = (m_pwfx->nChannels == 1)
+                        ? (stagingBuffer[f * 2 + 0] + stagingBuffer[f * 2 + 1]) * 0.5f
+                        : ((ch < 2) ? stagingBuffer[f * 2 + ch] : 0.0f);
                     float sample = (std::max)(-1.0f, (std::min)(1.0f, s));
                     int32_t val = static_cast<int32_t>(sample * 8388607.0f);
                     size_t idx = (f * m_pwfx->nChannels + ch) * 3;
@@ -380,7 +461,9 @@ void AudioPipeline::RenderLoop() {
             int32_t* pOut = reinterpret_cast<int32_t*>(pData);
             for (size_t f = 0; f < framesNeeded; ++f) {
                 for (uint32_t ch = 0; ch < m_pwfx->nChannels; ++ch) {
-                    float s = (ch < 2) ? stagingBuffer[f * 2 + ch] : 0.0f;
+                    float s = (m_pwfx->nChannels == 1)
+                        ? (stagingBuffer[f * 2 + 0] + stagingBuffer[f * 2 + 1]) * 0.5f
+                        : ((ch < 2) ? stagingBuffer[f * 2 + ch] : 0.0f);
                     float sample = (std::max)(-1.0f, (std::min)(1.0f, s));
                     pOut[f * m_pwfx->nChannels + ch] = static_cast<int32_t>(sample * 2147483647.0f);
                 }
@@ -391,6 +474,7 @@ void AudioPipeline::RenderLoop() {
         m_pRenderClient->ReleaseBuffer(framesNeeded, flags);
     }
 
+    m_running.store(false, std::memory_order_relaxed);
     if (hAvrt) AvRevertMmThreadCharacteristics(hAvrt);
     CoUninitialize();
 }
@@ -751,6 +835,12 @@ void AudioEngine::HandleEndpointVolumeNotification(float vol, bool muted, const 
     float effective = muted ? 0.0f : vol;
     if (m_pipelineA) m_pipelineA->SetMasterVolume(effective);
     if (m_pipelineB) m_pipelineB->SetMasterVolume(effective);
+    {
+        std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
+        for (auto& pipe : m_extraPipelines) {
+            if (pipe) pipe->SetMasterVolume(effective);
+        }
+    }
 }
 
 bool AudioEngine::Initialize() {
@@ -777,17 +867,7 @@ void AudioEngine::SelectDeviceA(const std::wstring& deviceId) {
         return;
     }
     m_deviceIdA = deviceId;
-    if (m_isStreaming.load(std::memory_order_relaxed) && m_pipelineA) {
-        float vol = m_pipelineA->GetVolume();
-        int delay = m_pipelineA->GetDelayMs();
-        float master = m_isMuted.load(std::memory_order_relaxed) ? 0.0f : m_masterVolume.load(std::memory_order_relaxed);
-        m_pipelineA->Shutdown();
-        if (m_pipelineA->Initialize(m_deviceIdA)) {
-            m_pipelineA->SetVolume(vol);
-            m_pipelineA->SetDelayMs(delay);
-            m_pipelineA->SetMasterVolume(master);
-        }
-    }
+    SelectPipelineDevice(m_pipelineA, deviceId);
 }
 
 void AudioEngine::SelectDeviceB(const std::wstring& deviceId) {
@@ -795,15 +875,21 @@ void AudioEngine::SelectDeviceB(const std::wstring& deviceId) {
         return;
     }
     m_deviceIdB = deviceId;
-    if (m_isStreaming.load(std::memory_order_relaxed) && m_pipelineB) {
-        float vol = m_pipelineB->GetVolume();
-        int delay = m_pipelineB->GetDelayMs();
+    SelectPipelineDevice(m_pipelineB, deviceId);
+}
+
+void AudioEngine::SelectPipelineDevice(std::shared_ptr<AudioPipeline> pipeline, const std::wstring& deviceId) {
+    if (!pipeline) return;
+    pipeline->SetDeviceId(deviceId);
+    if (m_isStreaming.load(std::memory_order_relaxed)) {
+        float vol = pipeline->GetVolume();
+        int delay = pipeline->GetDelayMs();
         float master = m_isMuted.load(std::memory_order_relaxed) ? 0.0f : m_masterVolume.load(std::memory_order_relaxed);
-        m_pipelineB->Shutdown();
-        if (m_pipelineB->Initialize(m_deviceIdB)) {
-            m_pipelineB->SetVolume(vol);
-            m_pipelineB->SetDelayMs(delay);
-            m_pipelineB->SetMasterVolume(master);
+        pipeline->Shutdown();
+        if (pipeline->Initialize(deviceId)) {
+            pipeline->SetVolume(vol);
+            pipeline->SetDelayMs(delay);
+            pipeline->SetMasterVolume(master);
         }
     }
 }
@@ -919,6 +1005,12 @@ void AudioEngine::SetMasterVolume(float vol) {
     float effective = m_isMuted.load(std::memory_order_relaxed) ? 0.0f : vol;
     if (m_pipelineA) m_pipelineA->SetMasterVolume(effective);
     if (m_pipelineB) m_pipelineB->SetMasterVolume(effective);
+    {
+        std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
+        for (auto& pipe : m_extraPipelines) {
+            if (pipe) pipe->SetMasterVolume(effective);
+        }
+    }
 
     if (m_syncWithWindowsVolume.load(std::memory_order_relaxed)) {
         if (!m_pDefaultEndpointVolume) {
@@ -928,6 +1020,34 @@ void AudioEngine::SetMasterVolume(float vol) {
             m_pDefaultEndpointVolume->SetMasterVolumeLevelScalar(vol, &GUID_AuduoVolumeContext);
         }
     }
+}
+
+void AudioEngine::RegisterPipeline(std::shared_ptr<AudioPipeline> pipeline) {
+    if (!pipeline) return;
+    std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
+    auto it = std::find(m_extraPipelines.begin(), m_extraPipelines.end(), pipeline);
+    if (it == m_extraPipelines.end()) {
+        m_extraPipelines.push_back(pipeline);
+    }
+}
+
+void AudioEngine::UnregisterPipeline(std::shared_ptr<AudioPipeline> pipeline) {
+    if (!pipeline) return;
+    std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
+    auto it = std::find(m_extraPipelines.begin(), m_extraPipelines.end(), pipeline);
+    if (it != m_extraPipelines.end()) {
+        m_extraPipelines.erase(it);
+    }
+}
+
+void AudioEngine::ClearExtraPipelines() {
+    std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
+    m_extraPipelines.clear();
+}
+
+std::vector<std::shared_ptr<AudioPipeline>> AudioEngine::GetExtraPipelines() const {
+    std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
+    return m_extraPipelines;
 }
 
 void AudioEngine::UpdateWindowsVolumeSync() {
@@ -947,6 +1067,12 @@ void AudioEngine::UpdateWindowsVolumeSync() {
             float effective = isMuted ? 0.0f : vol;
             if (m_pipelineA) m_pipelineA->SetMasterVolume(effective);
             if (m_pipelineB) m_pipelineB->SetMasterVolume(effective);
+            {
+                std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
+                for (auto& pipe : m_extraPipelines) {
+                    if (pipe) pipe->SetMasterVolume(effective);
+                }
+            }
         }
     }
 }
@@ -955,15 +1081,26 @@ bool AudioEngine::StartStreaming() {
     if (m_isStreaming.load(std::memory_order_relaxed)) return true;
 
     // Initialize playback pipelines
-    if (!m_pipelineA->Initialize(m_deviceIdA)) {
+    if (m_pipelineA && !m_pipelineA->Initialize(m_deviceIdA)) {
         std::wcerr << L"[Auduo] Failed to initialize Pipeline A on: " << m_deviceIdA << std::endl;
     }
-    if (!m_pipelineB->Initialize(m_deviceIdB)) {
+    if (m_pipelineB && !m_pipelineB->Initialize(m_deviceIdB)) {
         std::wcerr << L"[Auduo] Failed to initialize Pipeline B on: " << m_deviceIdB << std::endl;
     }
 
-    // Apply Smart Auto-Sync offset if enabled
-    if (m_smartAutoSync) {
+    {
+        std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
+        for (auto& pipe : m_extraPipelines) {
+            if (pipe && !pipe->GetDeviceId().empty()) {
+                if (!pipe->Initialize(pipe->GetDeviceId())) {
+                    std::wcerr << L"[Auduo] Failed to initialize extra pipeline " << pipe->GetName() << L" on: " << pipe->GetDeviceId() << std::endl;
+                }
+            }
+        }
+    }
+
+    // Apply Smart Auto-Sync offset only if enabled AND both primary pipelines are at 0ms delay
+    if (m_smartAutoSync && m_pipelineA && m_pipelineB && m_pipelineA->GetDelayMs() == 0 && m_pipelineB->GetDelayMs() == 0) {
         // Query devices to check if one is Bluetooth and the other is not
         auto devices = EnumerateOutputDevices();
         bool aIsBt = false, bIsBt = false;
@@ -1008,6 +1145,12 @@ void AudioEngine::StopStreaming() {
 
     m_pipelineA->Shutdown();
     m_pipelineB->Shutdown();
+    {
+        std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
+        for (auto& pipe : m_extraPipelines) {
+            if (pipe) pipe->Shutdown();
+        }
+    }
 
     m_isStreaming.store(false, std::memory_order_relaxed);
 }
@@ -1029,11 +1172,19 @@ void AudioEngine::PlayTestBeep() {
         beepData[i * 2 + 1] = sample;
     }
 
-    if (m_pipelineA->IsRunning()) {
+    if (m_pipelineA && m_pipelineA->IsRunning()) {
         m_pipelineA->PushAudio(beepData.data(), numFrames, sampleRate, 2);
     }
-    if (m_pipelineB->IsRunning()) {
+    if (m_pipelineB && m_pipelineB->IsRunning()) {
         m_pipelineB->PushAudio(beepData.data(), numFrames, sampleRate, 2);
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
+        for (auto& pipe : m_extraPipelines) {
+            if (pipe && pipe->IsRunning()) {
+                pipe->PushAudio(beepData.data(), numFrames, sampleRate, 2);
+            }
+        }
     }
 }
 
@@ -1237,13 +1388,21 @@ void AudioEngine::CaptureLoop() {
                     }
                 }
 
-                // Push captured audio into twin output pipelines (paused during acoustic calibration or metronome sync test)
+                // Push captured audio into output pipelines (paused during acoustic calibration or metronome sync test)
                 if (!m_isCalibrating.load(std::memory_order_relaxed) && !m_metronomeRunning.load(std::memory_order_relaxed)) {
                     if (m_pipelineA && m_pipelineA->IsRunning()) {
                         m_pipelineA->PushAudio(floatConversionBuffer.data(), numFramesAvailable, sampleRate, channels);
                     }
                     if (m_pipelineB && m_pipelineB->IsRunning()) {
                         m_pipelineB->PushAudio(floatConversionBuffer.data(), numFramesAvailable, sampleRate, channels);
+                    }
+                    {
+                        std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
+                        for (auto& pipe : m_extraPipelines) {
+                            if (pipe && pipe->IsRunning()) {
+                                pipe->PushAudio(floatConversionBuffer.data(), numFramesAvailable, sampleRate, channels);
+                            }
+                        }
                     }
                 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AudioEngine.hpp"
+#include "imgui.h"
 #include <d3d11.h>
 
 namespace Auduo {
@@ -30,9 +31,20 @@ private:
     void RefreshDeviceList();
     void RefreshInputDeviceList();
 
+    struct StreamChannel {
+        std::string label;
+        int deviceIdx = 0;
+        std::wstring deviceId;
+        float volume = 0.80f;
+        int syncDelayMs = 0;
+        std::shared_ptr<AudioPipeline> pipeline;
+        ImVec4 accentColor = ImVec4(0.4f, 0.8f, 1.0f, 1.0f);
+    };
+
     AudioEngine& m_engine;
     std::vector<AudioDevice> m_devices;
     std::vector<AudioDevice> m_inputDevices;
+    std::vector<StreamChannel> m_channels;
 
     int m_selectedDeviceA = 0;
     int m_selectedDeviceB = 0;

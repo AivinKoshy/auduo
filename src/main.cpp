@@ -4,12 +4,23 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <d3d11.h>
+#include <dwmapi.h>
 #include <tchar.h>
 #include <iostream>
 #include <string>
 #include <chrono>
 #include <io.h>
 #include <fcntl.h>
+
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+#ifndef DWMWA_CAPTION_COLOR
+#define DWMWA_CAPTION_COLOR 35
+#endif
+#ifndef DWMWA_TEXT_COLOR
+#define DWMWA_TEXT_COLOR 36
+#endif
 
 #include "imgui.h"
 #include "imgui_impl_win32.h"
@@ -167,9 +178,9 @@ int main(int argc, char* argv[]) {
     };
     RegisterClassExW(&wc);
 
-    const int clientWidth = 820;
-    const int clientHeight = 598;
-    DWORD winStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+    const int clientWidth = 840;
+    const int clientHeight = 605;
+    DWORD winStyle = WS_OVERLAPPEDWINDOW;
     RECT wr = { 0, 0, clientWidth, clientHeight };
     AdjustWindowRect(&wr, winStyle, FALSE);
 
@@ -180,6 +191,15 @@ int main(int argc, char* argv[]) {
         nullptr, nullptr, wc.hInstance, nullptr
     );
 
+    // Style native Windows title bar to match app theme
+    BOOL darkMode = TRUE;
+    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkMode, sizeof(darkMode));
+    // Exact background: RGB(20, 23, 28) matching ImGui WindowBg
+    COLORREF titlebarColor = RGB(20, 23, 28);
+    DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &titlebarColor, sizeof(titlebarColor));
+    COLORREF textColor = RGB(220, 225, 230);
+    DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, &textColor, sizeof(textColor));
+
     if (!CreateDeviceD3D(hwnd)) {
         CleanupDeviceD3D();
         UnregisterClassW(wc.lpszClassName, wc.hInstance);
@@ -187,8 +207,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    ShowWindow(hwnd, SW_SHOWDEFAULT);
+    ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
+    SetForegroundWindow(hwnd);
 
     Auduo::AudioEngine audioEngine;
     audioEngine.Initialize();
@@ -325,6 +346,12 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return true;
 
     switch (msg) {
+    case WM_GETMINMAXINFO: {
+        LPMINMAXINFO lpMMI = (LPMINMAXINFO)lParam;
+        lpMMI->ptMinTrackSize.x = 780;
+        lpMMI->ptMinTrackSize.y = 500;
+        return 0;
+    }
     case WM_SIZE:
         if (g_pd3dDevice != nullptr && wParam != SIZE_MINIMIZED) {
             CleanupRenderTarget();
