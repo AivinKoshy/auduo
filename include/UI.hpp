@@ -25,6 +25,8 @@ public:
     void ResetMinimizeToTray() { m_minimizeToTray = false; }
     bool IsAlwaysMinimizeToTray() const { return m_alwaysMinimizeToTray; }
 
+    int GetIdealClientHeight() const;
+
 private:
     void RenderHeader();
     void RenderChannel(const char* label, std::shared_ptr<AudioPipeline> pipeline, int& selectedDeviceIdx, int& selectedAppIdx);

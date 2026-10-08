@@ -225,6 +225,17 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Set initial window size snug to content
+    {
+        int initIdealH = ui.GetIdealClientHeight();
+        RECT curWinR, curCliR;
+        GetWindowRect(hwnd, &curWinR);
+        GetClientRect(hwnd, &curCliR);
+        int borderH = (curWinR.bottom - curWinR.top) - (curCliR.bottom - curCliR.top);
+        SetWindowPos(hwnd, nullptr, 0, 0, curWinR.right - curWinR.left, initIdealH + borderH,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
     SetupTrayIcon(hwnd);
 
     // Main Application Loop
@@ -260,6 +271,21 @@ int main(int argc, char* argv[]) {
         }
 
         g_alwaysMinimizeToTray = ui.IsAlwaysMinimizeToTray();
+
+        // Dynamically fit window height around content (smoothly adjust when channels are added/removed)
+        static int s_lastAppliedIdealH = 0;
+        int idealH = ui.GetIdealClientHeight();
+        if (idealH != s_lastAppliedIdealH && !IsIconic(hwnd) && !IsZoomed(hwnd)) {
+            s_lastAppliedIdealH = idealH;
+            RECT curWindowRect, curClientRect;
+            GetWindowRect(hwnd, &curWindowRect);
+            GetClientRect(hwnd, &curClientRect);
+            int borderDecorationH = (curWindowRect.bottom - curWindowRect.top) - (curClientRect.bottom - curClientRect.top);
+            int newTotalH = idealH + borderDecorationH;
+            SetWindowPos(hwnd, nullptr, 0, 0, curWindowRect.right - curWindowRect.left, newTotalH,
+                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+
         ui.Render();
 
         const float clearColor[4] = { 0.08f, 0.09f, 0.11f, 1.0f };

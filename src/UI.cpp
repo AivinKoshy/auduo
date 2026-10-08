@@ -193,6 +193,27 @@ bool UI::Initialize(HWND hwnd, ID3D11Device* device, ID3D11DeviceContext* contex
     return true;
 }
 
+int UI::GetIdealClientHeight() const {
+    // Non-streams elements (Header, Master Vol, Calibration, Terminal Log, Footer, margins & padding): ~385px
+    // Streams: m_channels.size() * (panelHeight (114) + spacing (8)) + addBtn (28) + spacing (8)
+    const float panelHeight = 114.0f;
+    const float addBtnHeight = 28.0f;
+    const float itemSpacingY = 8.0f;
+    const float fixedOverhead = 390.0f;
+
+    float neededStreams = m_channels.size() * (panelHeight + itemSpacingY) + addBtnHeight + itemSpacingY;
+    int idealH = static_cast<int>(std::ceil(fixedOverhead + neededStreams));
+
+    // Cap to work area height minus safety margin if available, or minimum 650
+    RECT workArea;
+    if (SystemParametersInfoA(SPI_GETWORKAREA, 0, &workArea, 0)) {
+        int maxWorkH = (workArea.bottom - workArea.top) - 80;
+        if (idealH > maxWorkH) idealH = maxWorkH;
+    }
+    if (idealH < 620) idealH = 620;
+    return idealH;
+}
+
 void UI::Shutdown() {
     if (!m_initialized) return;
     m_engine.StopMicMonitor();
@@ -540,7 +561,8 @@ void UI::Render() {
     ImGui::SetNextWindowSize(io.DisplaySize);
 
     ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                                   ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
+                                   ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
 
     ImGui::Begin("AuduoMainWindow", nullptr, windowFlags);
 
