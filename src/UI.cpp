@@ -291,8 +291,8 @@ void UI::LoadConfig(const std::string& filename) {
             else if (key == "mic_preview") {
                 m_micMonitorEnabled = (val == "1");
             }
-            else if (key == "sync_a") m_syncOffsetA = std::clamp(std::stoi(val), 0, 500);
-            else if (key == "sync_b") m_syncOffsetB = std::clamp(std::stoi(val), 0, 500);
+            else if (key == "sync_a") m_syncOffsetA = std::clamp(std::stoi(val), 0, 2000);
+            else if (key == "sync_b") m_syncOffsetB = std::clamp(std::stoi(val), 0, 2000);
             else if (key == "device_a_idx") m_selectedDeviceA = std::stoi(val);
             else if (key == "device_b_idx") m_selectedDeviceB = std::stoi(val);
             else if (key == "device_a_id") {
@@ -386,7 +386,7 @@ void UI::LoadConfig(const std::string& filename) {
                     std::string prop = key.substr(p1 + 1);
                     if (cIdx >= 2 && cIdx < (int)m_channels.size()) {
                         if (prop == "vol") m_channels[cIdx].volume = std::clamp(std::stof(val), 0.0f, 1.0f);
-                        else if (prop == "delay") m_channels[cIdx].syncDelayMs = std::clamp(std::stoi(val), 0, 500);
+                        else if (prop == "delay") m_channels[cIdx].syncDelayMs = std::clamp(std::stoi(val), 0, 2000);
                         else if (prop == "dev_idx") m_channels[cIdx].deviceIdx = std::stoi(val);
                         else if (prop == "dev_id") {
                             int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, val.c_str(), (int)val.size(), NULL, 0);
@@ -620,12 +620,14 @@ void UI::Render() {
         }
     }
 
-    // Periodic Device Reconnect Watchdog (every 2 seconds if streaming is active)
+    // Periodic Device Reconnect Watchdog (every 3 seconds if streaming is active)
     static auto lastReconnectCheck = std::chrono::steady_clock::now();
-    if (m_engine.IsStreaming() && std::chrono::duration_cast<std::chrono::seconds>(now - lastReconnectCheck).count() >= 2) {
+    if (m_engine.IsStreaming() && std::chrono::duration_cast<std::chrono::seconds>(now - lastReconnectCheck).count() >= 3) {
         lastReconnectCheck = now;
         for (auto& chan : m_channels) {
-            if (chan.pipeline && !chan.pipeline->IsRunning() && !chan.deviceId.empty()) {
+            // Do NOT hammer Initialize on devices that encountered a driver/buffer failure (prevents wedging Windows Bluetooth stack)
+            // Error states are safely cleared when the user clicks 'Refresh'
+            if (chan.pipeline && !chan.pipeline->IsRunning() && !chan.deviceId.empty() && !chan.pipeline->HasDeviceError()) {
                 chan.pipeline->Initialize(chan.deviceId);
                 float master = m_engine.IsMuted() ? 0.0f : m_engine.GetMasterVolume();
                 chan.pipeline->SetMasterVolume(master);
@@ -814,7 +816,7 @@ void UI::Render() {
             std::string delayId = "##Delay_" + std::to_string(chIdx);
             ImGui::PushStyleColor(ImGuiCol_SliderGrab, chan.accentColor);
             ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, ImVec4(chan.accentColor.x * 1.15f, chan.accentColor.y * 1.15f, chan.accentColor.z * 1.15f, 1.0f));
-            if (ImGui::SliderInt(delayId.c_str(), &chan.syncDelayMs, 0, 500, "+%d ms")) {
+            if (ImGui::SliderInt(delayId.c_str(), &chan.syncDelayMs, 0, 2000, "+%d ms")) {
                 if (chIdx == 0) m_syncOffsetA = chan.syncDelayMs;
                 if (chIdx == 1) m_syncOffsetB = chan.syncDelayMs;
                 if (chan.pipeline) chan.pipeline->SetDelayMs(chan.syncDelayMs);
@@ -1022,41 +1024,71 @@ void UI::Render() {
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.14f, 0.55f, 0.75f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.68f, 0.90f, 1.0f));
     if (ImGui::Button("  1-Click Auto-Sync  ", ImVec2(autoSyncBtnWidth, 32))) {
-        if (!m_devices.empty()) {
-            if (m_selectedDeviceA >= 0 && m_selectedDeviceA < (int)m_devices.size()) {
-                m_engine.SelectDeviceA(m_devices[m_selectedDeviceA].id);
-            }
-            if (m_selectedDeviceB >= 0 && m_selectedDeviceB < (int)m_devices.size()) {
-                m_engine.SelectDeviceB(m_devices[m_selectedDeviceB].id);
+        std::vector<int> activeChannels;
+        for (size_t i = 0; i < m_channels.size(); ++i) {
+            if (m_channels[i].deviceIdx >= 0 && m_channels[i].deviceIdx < (int)m_devices.size()) {
+                activeChannels.push_back(static_cast<int>(i));
+                if (i == 0) m_engine.SelectDeviceA(m_channels[i].deviceId);
+                else if (i == 1) m_engine.SelectDeviceB(m_channels[i].deviceId);
+                else if (m_channels[i].pipeline) m_engine.SelectPipelineDevice(m_channels[i].pipeline, m_channels[i].deviceId);
             }
         }
+
         m_autoSyncDone = false;
         m_autoSyncDelta = 0;
-        m_calibMsg = "Firing simultaneous orthogonal chirps (Stream A: 700-1400Hz, Stream B: 3200-5200Hz)...";
-        m_engine.AutoSyncBothChannels([this](bool success, int deltaMs, const std::string& msg) {
-            m_autoSyncDone = success;
-            m_autoSyncDelta = deltaMs;
-            m_calibMsg = msg;
-            if (success) {
-                if (deltaMs > 0) {
-                    m_syncOffsetA = 0;
-                    m_syncOffsetB = (std::min)(deltaMs, 500);
-                } else if (deltaMs < 0) {
-                    m_syncOffsetA = (std::min)(-deltaMs, 500);
-                    m_syncOffsetB = 0;
-                } else {
-                    m_syncOffsetA = 0;
-                    m_syncOffsetB = 0;
+
+        if (activeChannels.size() <= 2) {
+            m_calibMsg = "Firing simultaneous orthogonal chirps (Stream A: 700-1400Hz, Stream B: 3200-5200Hz)...";
+            m_engine.AutoSyncBothChannels([this](bool success, int deltaMs, const std::string& msg) {
+                m_autoSyncDone = success;
+                m_autoSyncDelta = deltaMs;
+                m_calibMsg = msg;
+                if (success) {
+                    if (deltaMs > 0) {
+                        m_syncOffsetA = 0;
+                        m_syncOffsetB = (std::min)(deltaMs, 2000);
+                    } else if (deltaMs < 0) {
+                        m_syncOffsetA = (std::min)(-deltaMs, 2000);
+                        m_syncOffsetB = 0;
+                    } else {
+                        m_syncOffsetA = 0;
+                        m_syncOffsetB = 0;
+                    }
+                    if (m_channels.size() > 0) {
+                        m_channels[0].syncDelayMs = m_syncOffsetA;
+                        if (m_channels[0].pipeline) m_channels[0].pipeline->SetDelayMs(m_syncOffsetA);
+                    }
+                    if (m_channels.size() > 1) {
+                        m_channels[1].syncDelayMs = m_syncOffsetB;
+                        if (m_channels[1].pipeline) m_channels[1].pipeline->SetDelayMs(m_syncOffsetB);
+                    }
+                    SaveConfig();
                 }
-                m_engine.GetPipelineA()->SetDelayMs(m_syncOffsetA);
-                m_engine.GetPipelineB()->SetDelayMs(m_syncOffsetB);
-                SaveConfig();
-            }
-        });
+            });
+        } else {
+            m_calibMsg = "Calibrating " + std::to_string(activeChannels.size()) + " channels sequentially via mic...";
+            m_engine.AutoSyncChannels(activeChannels, [this, activeChannels](bool success, const std::vector<int>& delays, const std::string& msg) {
+                m_autoSyncDone = success;
+                m_calibMsg = msg;
+                if (success && delays.size() == activeChannels.size()) {
+                    for (size_t k = 0; k < activeChannels.size(); ++k) {
+                        int chIdx = activeChannels[k];
+                        int d = (std::min)(delays[k], 2000);
+                        m_channels[chIdx].syncDelayMs = d;
+                        if (m_channels[chIdx].pipeline) {
+                            m_channels[chIdx].pipeline->SetDelayMs(d);
+                        }
+                        if (chIdx == 0) m_syncOffsetA = d;
+                        if (chIdx == 1) m_syncOffsetB = d;
+                    }
+                    SaveConfig();
+                }
+            });
+        }
     }
     ImGui::PopStyleColor(2);
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Fires orthogonal frequency chirps across Stream A and Stream B at the exact same instant (T=0).\nCancels out microphone latency and measures exact acoustic time-difference.");
+        ImGui::SetTooltip("Measures acoustic arrival times via microphone and perfectly time-aligns all connected devices.\n2 devices: Simultaneous dual-chirp (zero mic distance error).\n3+ devices: Sequential multi-pulse acoustic calibration.");
     }
 
     ImGui::SameLine();
@@ -1067,7 +1099,7 @@ void UI::Render() {
     }
     ImGui::PopStyleColor(2);
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Click for instructions on how to run Auto-Sync and how the dual-chirp calibration works.");
+        ImGui::SetTooltip("Click for instructions on how to run Auto-Sync and how multi-channel acoustic calibration works.");
     }
 
     ImGui::SameLine(colB_X);
@@ -1085,21 +1117,20 @@ void UI::Render() {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.50f, 0.35f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.62f, 0.42f, 1.0f));
         if (ImGui::Button("  Metronome Sync Clapper  ", ImVec2(colWidth, 32))) {
-            if (!m_devices.empty()) {
-                if (m_selectedDeviceA >= 0 && m_selectedDeviceA < (int)m_devices.size()) {
-                    m_engine.SelectDeviceA(m_devices[m_selectedDeviceA].id);
+            float master = m_engine.IsMuted() ? 0.0f : m_engine.GetMasterVolume();
+            for (size_t i = 0; i < m_channels.size(); ++i) {
+                auto& chan = m_channels[i];
+                if (chan.deviceIdx >= 0 && chan.deviceIdx < (int)m_devices.size()) {
+                    if (i == 0) m_engine.SelectDeviceA(m_devices[chan.deviceIdx].id);
+                    else if (i == 1) m_engine.SelectDeviceB(m_devices[chan.deviceIdx].id);
+                    else if (chan.pipeline) m_engine.SelectPipelineDevice(chan.pipeline, m_devices[chan.deviceIdx].id);
                 }
-                if (m_selectedDeviceB >= 0 && m_selectedDeviceB < (int)m_devices.size()) {
-                    m_engine.SelectDeviceB(m_devices[m_selectedDeviceB].id);
+                if (chan.pipeline) {
+                    chan.pipeline->SetVolume(chan.volume);
+                    chan.pipeline->SetDelayMs(chan.syncDelayMs);
+                    chan.pipeline->SetMasterVolume(master);
                 }
             }
-            m_engine.GetPipelineA()->SetVolume(m_volA);
-            m_engine.GetPipelineB()->SetVolume(m_volB);
-            m_engine.GetPipelineA()->SetDelayMs(m_syncOffsetA);
-            m_engine.GetPipelineB()->SetDelayMs(m_syncOffsetB);
-            float master = m_engine.IsMuted() ? 0.0f : m_engine.GetMasterVolume();
-            m_engine.GetPipelineA()->SetMasterVolume(master);
-            m_engine.GetPipelineB()->SetMasterVolume(master);
 
             m_engine.StartMetronome(500);
             m_metronomeEnabled = true;
@@ -1215,7 +1246,21 @@ void UI::Render() {
     }
     ImGui::SameLine();
     if (ImGui::Button("Refresh", ImVec2(colA_btnWidth, 0))) {
+        m_engine.ResetAndRefresh();
         RefreshDeviceList();
+        for (size_t i = 0; i < m_channels.size(); ++i) {
+            auto& chan = m_channels[i];
+            if (chan.deviceIdx >= 0 && chan.deviceIdx < (int)m_devices.size()) {
+                chan.deviceId = m_devices[chan.deviceIdx].id;
+                if (i == 0) m_engine.SelectDeviceA(chan.deviceId);
+                else if (i == 1) m_engine.SelectDeviceB(chan.deviceId);
+                else if (chan.pipeline) m_engine.SelectPipelineDevice(chan.pipeline, chan.deviceId);
+            }
+            if (chan.pipeline) {
+                chan.pipeline->SetVolume(chan.volume);
+                chan.pipeline->SetDelayMs(chan.syncDelayMs);
+            }
+        }
     }
     ImGui::SameLine();
     if (ImGui::Button("Minimize to Tray", ImVec2(colA_btnWidth, 0))) {

@@ -20,7 +20,7 @@ public:
 // Represents one audio playback pipe (Output Device A or B)
 class AudioPipeline {
 public:
-    AudioPipeline(const std::wstring& name, uint32_t bufferCapacityFrames = 48000 * 2);
+    AudioPipeline(const std::wstring& name, uint32_t bufferCapacityFrames = 48000 * 4);
     ~AudioPipeline();
 
     bool Initialize(const std::wstring& endpointDeviceId);
@@ -48,6 +48,7 @@ public:
     float GetPeakVU() const { return m_metrics.peakVU.load(std::memory_order_relaxed); }
     bool IsRunning() const { return m_running.load(std::memory_order_relaxed); }
     bool HasDeviceError() const { return m_deviceError.load(std::memory_order_relaxed); }
+    void ResetDeviceError() { m_deviceError.store(false, std::memory_order_relaxed); }
 
     void SetDeviceId(const std::wstring& id) { m_deviceId = id; }
     const std::wstring& GetDeviceId() const { return m_deviceId; }
@@ -100,6 +101,9 @@ public:
     bool Initialize();
     void Shutdown();
 
+    // Total backend reset & cleanup (releases all COM audio clients, clears pipeline errors, re-evaluates endpoints)
+    void ResetAndRefresh();
+
     bool StartStreaming();
     void StopStreaming();
     bool IsStreaming() const { return m_isStreaming.load(std::memory_order_relaxed); }
@@ -127,8 +131,10 @@ public:
     void UnregisterPipeline(std::shared_ptr<AudioPipeline> pipeline);
     void ClearExtraPipelines();
     std::vector<std::shared_ptr<AudioPipeline>> GetExtraPipelines() const;
+    std::vector<std::shared_ptr<AudioPipeline>> GetAllPipelines() const;
+    std::shared_ptr<AudioPipeline> GetPipelineByIndex(size_t index) const;
 
-    // Play high-precision synchronized test chime across both channels
+    // Play high-precision synchronized test chime across all active output pipelines
     void PlayTestBeep();
 
     void SetPreventEchoOnDefault(bool enable) { m_preventEchoOnDefault = enable; }
@@ -140,7 +146,10 @@ public:
     // Simultaneous Dual-Frequency Acoustic Calibration (Fires orthogonal chirps across A and B at once)
     void AutoSyncBothChannels(std::function<void(bool success, int deltaMs, const std::string& msg)> onComplete);
 
-    // Two-Step Acoustic Mic Calibration (Single channel fallback)
+    // Multi-Channel Acoustic Auto-Sync across N active channels (Sequentially measures each, finds slowest, aligns all)
+    void AutoSyncChannels(const std::vector<int>& channelIndices, std::function<void(bool success, const std::vector<int>& delaysMs, const std::string& msg)> onComplete);
+
+    // Acoustic Mic Calibration for arbitrary channel index (0 = A, 1 = B, 2+ = extra pipelines)
     void CalibrateChannel(int channelIndex, std::function<void(bool success, int latencyMs, const std::string& msg)> onComplete);
     bool IsCalibrating() const { return m_isCalibrating.load(std::memory_order_relaxed); }
     std::string GetCalibrationStatus() const;
@@ -182,6 +191,7 @@ private:
     void CaptureLoop();
     void SingleChannelCalibrationWorker(int channelIndex, std::function<void(bool, int, const std::string&)> onComplete);
     void DualChannelAutoSyncWorker(std::function<void(bool, int, const std::string&)> onComplete);
+    void MultiChannelAutoSyncWorker(const std::vector<int>& channelIndices, std::function<void(bool, const std::vector<int>&, const std::string&)> onComplete);
     void MicMonitorLoop();
     void MetronomeLoop(int intervalMs);
 
