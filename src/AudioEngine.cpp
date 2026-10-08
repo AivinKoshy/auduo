@@ -2765,8 +2765,20 @@ void AudioEngine::MultiChannelAutoSyncWorker(const std::vector<int>& channelIndi
 
         if (shotSuccess) {
             measuredLatencies[i] = detectedLatency;
+            {
+                std::lock_guard<std::mutex> lock(m_calibrationMutex);
+                std::ostringstream ss;
+                ss << pipeName << ": Acoustic arrival detected @ " << detectedLatency << " ms";
+                m_calibrationStatus = ss.str();
+            }
         } else {
             anyFailure = true;
+            {
+                std::lock_guard<std::mutex> lock(m_calibrationMutex);
+                std::ostringstream ss;
+                ss << pipeName << ": Acoustic pulse not detected by microphone";
+                m_calibrationStatus = ss.str();
+            }
         }
 
         Sleep(50);

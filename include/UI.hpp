@@ -72,6 +72,10 @@ private:
     std::string m_calibMsg;
 
     char m_statusMessage[128] = "Ready";
+
+    std::vector<std::string> m_terminalLogs;
+    std::string m_lastCalibStatus;
+    void AddTerminalLog(const std::string& line);
 };
 
 } // namespace Auduo

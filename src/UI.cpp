@@ -134,6 +134,8 @@ UI::UI(AudioEngine& engine)
             m_engine.SelectMicDevice(m_inputDevices[m_selectedMicDevice].id);
         }
     }
+
+    AddTerminalLog("AuDuo Engine initialized. Ready for multi-device sync.");
 }
 
 UI::~UI() {
@@ -198,6 +200,15 @@ void UI::Shutdown() {
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
     m_initialized = false;
+}
+
+void UI::AddTerminalLog(const std::string& line) {
+    if (line.empty()) return;
+    if (!m_terminalLogs.empty() && m_terminalLogs.back() == line) return;
+    m_terminalLogs.push_back(line);
+    if (m_terminalLogs.size() > 100) {
+        m_terminalLogs.erase(m_terminalLogs.begin());
+    }
 }
 
 void UI::RefreshDeviceList() {
@@ -484,8 +495,8 @@ static void DrawLED(bool active, const char* label, const char* tooltip = nullpt
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     ImVec2 p = ImGui::GetCursorScreenPos();
     float radius = 4.5f;
-    float lineHeight = ImGui::GetTextLineHeight();
-    ImVec2 center(p.x + radius + 1.0f, p.y + lineHeight * 0.5f);
+    float frameH = ImGui::GetFrameHeight();
+    ImVec2 center(p.x + radius + 1.0f, p.y + frameH * 0.5f);
 
     ImVec4 chosenColor = active ? onColor : offColor;
     ImU32 col = ImGui::ColorConvertFloat4ToU32(chosenColor);
@@ -497,8 +508,9 @@ static void DrawLED(bool active, const char* label, const char* tooltip = nullpt
     }
     drawList->AddCircleFilled(center, radius, col);
 
-    ImGui::Dummy(ImVec2(radius * 2.0f + 2.0f, lineHeight));
+    ImGui::Dummy(ImVec2(radius * 2.0f + 2.0f, frameH));
     ImGui::SameLine(0.0f, 6.0f);
+    ImGui::AlignTextToFramePadding();
     ImGui::TextColored(chosenColor, "%s", label);
     ImGui::EndGroup();
 
@@ -538,6 +550,7 @@ void UI::Render() {
 
     // Row 1: Button on the left (Column A), Status on the right (Column B)
     const float streamBtnHeight = 32.0f;
+    float row1StartY = ImGui::GetCursorPosY();
     bool streaming = m_engine.IsStreaming();
     if (!streaming) {
         if (!cableDefault) {
@@ -566,6 +579,7 @@ void UI::Render() {
             }
             m_engine.SetMirrorSystemAudio(true);
             m_engine.StartStreaming();
+            AddTerminalLog("Audio streaming started. Mirroring system audio across active streams.");
         }
         ImGui::PopStyleColor(2);
         if (!cableDefault) {
@@ -579,14 +593,15 @@ void UI::Render() {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.25f, 0.25f, 1.0f));
         if (ImGui::Button("  STOP STREAMING  ", ImVec2(colWidth, streamBtnHeight))) {
             m_engine.StopStreaming();
+            AddTerminalLog("Audio streaming stopped.");
         }
         ImGui::PopStyleColor(2);
     }
 
-    // Column B: Status LED aligned with Column B (starting at colB_X)
-    ImGui::SameLine(colB_X);
-    float ledYOffset = (streamBtnHeight - ImGui::GetTextLineHeight()) * 0.5f;
-    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + ledYOffset);
+    // Column B: Status LED aligned with Column B (starting at colB_X, vertically centered with button)
+    float ledFrameH = ImGui::GetFrameHeight();
+    float ledYOffset = (streamBtnHeight - ledFrameH) * 0.5f;
+    ImGui::SetCursorPos(ImVec2(colB_X, row1StartY + ledYOffset));
     if (cableDefault) {
         DrawLED(true, "Virtual Cable Ready",
                 "VB-Audio Virtual Cable is connected and set as the Windows Default Playback Device.",
@@ -598,7 +613,7 @@ void UI::Render() {
                 ImVec4(0.25f, 0.90f, 0.45f, 1.0f),
                 ImVec4(0.95f, 0.25f, 0.25f, 1.0f));
     }
-    ImGui::SetCursorPosY(ImGui::GetCursorPosY() - ledYOffset);
+    ImGui::SetCursorPosY(row1StartY + streamBtnHeight + ImGui::GetStyle().ItemSpacing.y);
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -671,7 +686,7 @@ void UI::Render() {
     const float panelHeight = 114.0f;
     const float addBtnHeight = 28.0f;
     const float itemSpacingY = ImGui::GetStyle().ItemSpacing.y;
-    const float footerReservedHeight = 200.0f;
+    const float footerReservedHeight = 252.0f;
 
     float neededStreamsHeight = m_channels.size() * (panelHeight + itemSpacingY) + addBtnHeight + itemSpacingY;
     float maxStreamsHeight = ImGui::GetContentRegionAvail().y - footerReservedHeight;
@@ -843,15 +858,15 @@ void UI::Render() {
         SaveConfig();
     }
 
-    // Centered, sleek "+ Add Stream Device" Pill Button inside scroll region
-    const float addBtnWidth = 176.0f;
-    ImGui::SetCursorPosX((fullWidth - addBtnWidth) * 0.5f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 14.0f);
+    // Full-width sleek "+ Add Stream Device" card button matching stream cards
+    ImGui::Spacing();
+    const float addBtnWidth = fullWidth;
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.22f, 0.32f, 0.85f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.40f, 0.65f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.48f, 0.90f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.32f, 0.50f, 0.75f, 0.75f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.13f, 0.16f, 0.22f, 0.75f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.30f, 0.46f, 0.90f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.45f, 0.85f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.26f, 0.34f, 0.48f, 0.65f));
 
     bool addTriggered = ImGui::Button("+  Add Stream Device", ImVec2(addBtnWidth, addBtnHeight));
     if (!addTriggered && (ImGui::IsKeyPressed(ImGuiKey_Equal) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd))) {
@@ -924,6 +939,8 @@ void UI::Render() {
     ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.25f, 1.0f), "Latency Calibration");
 
     // Row: Input Device (Mic) & RAW Mode indicator on the same row (Item 8)
+    float micRowStartY = ImGui::GetCursorPosY();
+    ImGui::AlignTextToFramePadding();
     ImGui::Text("Mic Input:");
     ImGui::SameLine();
 
@@ -957,8 +974,8 @@ void UI::Render() {
         ImGui::EndCombo();
     }
 
-    // RAW Audio Indicator aligned with Column B (Item 8)
-    ImGui::SameLine(colB_X);
+    // RAW Audio Indicator aligned with Column B, vertically centered with combo
+    ImGui::SetCursorPos(ImVec2(colB_X, micRowStartY));
     bool rawActive = m_engine.IsMicRawActive();
     DrawLED(rawActive,
             rawActive ? "RAW Audio Mode" : "Standard Audio Mode",
@@ -1039,10 +1056,12 @@ void UI::Render() {
 
         if (activeChannels.size() <= 2) {
             m_calibMsg = "Firing simultaneous orthogonal chirps (Stream A: 700-1400Hz, Stream B: 3200-5200Hz)...";
+            AddTerminalLog("Auto-Sync: Firing dual orthogonal acoustic chirps (A: 700-1400Hz, B: 3200-5200Hz)...");
             m_engine.AutoSyncBothChannels([this](bool success, int deltaMs, const std::string& msg) {
                 m_autoSyncDone = success;
                 m_autoSyncDelta = deltaMs;
                 m_calibMsg = msg;
+                AddTerminalLog(msg);
                 if (success) {
                     if (deltaMs > 0) {
                         m_syncOffsetA = 0;
@@ -1067,9 +1086,11 @@ void UI::Render() {
             });
         } else {
             m_calibMsg = "Calibrating " + std::to_string(activeChannels.size()) + " channels sequentially via mic...";
+            AddTerminalLog("Auto-Sync: Initiating sequential acoustic scan across " + std::to_string(activeChannels.size()) + " channels...");
             m_engine.AutoSyncChannels(activeChannels, [this, activeChannels](bool success, const std::vector<int>& delays, const std::string& msg) {
                 m_autoSyncDone = success;
                 m_calibMsg = msg;
+                AddTerminalLog(msg);
                 if (success && delays.size() == activeChannels.size()) {
                     for (size_t k = 0; k < activeChannels.size(); ++k) {
                         int chIdx = activeChannels[k];
@@ -1111,6 +1132,7 @@ void UI::Render() {
         if (ImGui::Button("  Stop Metronome Clapper  ", ImVec2(colWidth, 32))) {
             m_engine.StopMetronome();
             m_metronomeEnabled = false;
+            AddTerminalLog("Metronome Sync Clapper stopped.");
         }
         ImGui::PopStyleColor(2);
     } else {
@@ -1134,6 +1156,7 @@ void UI::Render() {
 
             m_engine.StartMetronome(500);
             m_metronomeEnabled = true;
+            AddTerminalLog("Metronome Sync Clapper active @ 120 BPM across all streams.");
         }
         ImGui::PopStyleColor(2);
     }
@@ -1145,16 +1168,45 @@ void UI::Render() {
         ImGui::EndDisabled();
     }
 
-    // Status / Helper text line
-    if (calibrating) {
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "[CALIBRATING...] %s", m_engine.GetCalibrationStatus().c_str());
-    } else if (m_autoSyncDone) {
-        ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.4f, 1.0f), "[SYNC APPLIED] %s", m_calibMsg.c_str());
-    } else if (!m_calibMsg.empty()) {
-        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "Status: %s", m_calibMsg.c_str());
-    } else {
-        ImGui::TextDisabled("Status: Hold earbuds near mic, click '1-Click Auto-Sync', or use Metronome to verify.");
+    // Capture real-time calibration progress messages into terminal log
+    std::string currentCalibStatus = m_engine.GetCalibrationStatus();
+    if (!currentCalibStatus.empty() && currentCalibStatus != m_lastCalibStatus) {
+        m_lastCalibStatus = currentCalibStatus;
+        AddTerminalLog(currentCalibStatus);
     }
+
+    ImGui::Spacing();
+
+    // Terminal-Style Status & Scan Console Window
+    const float terminalHeight = 56.0f;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.05f, 0.06f, 0.08f, 0.95f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.18f, 0.24f, 0.34f, 0.75f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 6.0f));
+
+    ImGui::BeginChild("TerminalLogWindow", ImVec2(0, terminalHeight), true, ImGuiWindowFlags_None);
+
+    for (size_t i = 0; i < m_terminalLogs.size(); ++i) {
+        const auto& log = m_terminalLogs[i];
+        if (log.find("[SYNC APPLIED]") != std::string::npos || log.find("Multi-Sync Applied") != std::string::npos) {
+            ImGui::TextColored(ImVec4(0.25f, 0.92f, 0.45f, 1.0f), "> %s", log.c_str());
+        } else if (log.find("[CALIBRATING") != std::string::npos || log.find("Calibrating") != std::string::npos || log.find("Auto-Sync:") != std::string::npos || log.find("Acoustic arrival") != std::string::npos) {
+            ImGui::TextColored(ImVec4(1.0f, 0.70f, 0.20f, 1.0f), "> %s", log.c_str());
+        } else if (log.find("Error") != std::string::npos || log.find("failed") != std::string::npos || log.find("not detected") != std::string::npos || log.find("incomplete") != std::string::npos) {
+            ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "> %s", log.c_str());
+        } else {
+            ImGui::TextColored(ImVec4(0.65f, 0.75f, 0.85f, 1.0f), "> %s", log.c_str());
+        }
+    }
+
+    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 20.0f) {
+        ImGui::SetScrollHereY(1.0f);
+    }
+
+    ImGui::EndChild();
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(2);
 
     if (!streaming) {
         ImGui::EndDisabled();
@@ -1243,6 +1295,7 @@ void UI::Render() {
 
     if (ImGui::Button("Test Beep", ImVec2(colA_btnWidth, 0))) {
         m_engine.PlayTestBeep();
+        AddTerminalLog("Test Chime: Fired 250ms alignment pulse across active streams.");
     }
     ImGui::SameLine();
     if (ImGui::Button("Refresh", ImVec2(colA_btnWidth, 0))) {
@@ -1261,6 +1314,7 @@ void UI::Render() {
                 chan.pipeline->SetDelayMs(chan.syncDelayMs);
             }
         }
+        AddTerminalLog("Backend reset: pipelines flushed and audio devices refreshed.");
     }
     ImGui::SameLine();
     if (ImGui::Button("Minimize to Tray", ImVec2(colA_btnWidth, 0))) {
