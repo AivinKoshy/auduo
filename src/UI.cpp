@@ -47,9 +47,10 @@ static void OpenDonationPage() {
 // Helper to convert wstring to utf8 string
 static std::string WStringToUTF8(const std::wstring& wstr) {
     if (wstr.empty()) return std::string();
-    int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), NULL, 0, NULL, NULL);
-    std::string strTo(sizeNeeded, 0);
-    WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), &strTo[0], sizeNeeded, NULL, NULL);
+    int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, wstr.data(), (int)wstr.size(), NULL, 0, NULL, NULL);
+    if (sizeNeeded <= 0) return std::string();
+    std::string strTo(sizeNeeded, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wstr.data(), (int)wstr.size(), &strTo[0], sizeNeeded, NULL, NULL);
     return strTo;
 }
 
@@ -443,6 +444,16 @@ void UI::LoadConfig(const std::string& filename) {
         if (m_selectedDeviceB >= 0 && m_selectedDeviceB < (int)m_devices.size()) {
             m_channels[1].deviceId = m_devices[m_selectedDeviceB].id;
         }
+    }
+
+    if (m_selectedMicDevice < 0 || m_selectedMicDevice >= (int)m_inputDevices.size()) {
+        m_selectedMicDevice = 0;
+    }
+    if (m_selectedDeviceA < 0 || m_selectedDeviceA >= (int)m_devices.size()) {
+        m_selectedDeviceA = 0;
+    }
+    if (m_selectedDeviceB < 0 || m_selectedDeviceB >= (int)m_devices.size()) {
+        m_selectedDeviceB = (m_devices.size() > 1) ? 1 : 0;
     }
 }
 
@@ -960,6 +971,9 @@ void UI::Render() {
         if (dev.isBluetooth) label += " [BT]";
         return label;
     };
+    if (m_selectedMicDevice < 0 || m_selectedMicDevice >= (int)m_inputDevices.size()) {
+        m_selectedMicDevice = 0;
+    }
     std::string curMic = m_inputDevices.empty() ? "No Microphones Active" : formatMicLabel(m_inputDevices[m_selectedMicDevice]);
     if (ImGui::BeginCombo("##CalibMic", curMic.c_str())) {
         for (int i = 0; i < (int)m_inputDevices.size(); ++i) {
@@ -982,6 +996,9 @@ void UI::Render() {
             rawActive ? "Direct unsuppressed hardware capture. Windows/OEM noise gates and voice filters are bypassed." : "Standard audio capture mode.",
             ImVec4(0.25f, 0.90f, 0.45f, 1.0f),
             ImVec4(0.60f, 0.60f, 0.60f, 1.0f));
+
+    // Cleanly advance cursor to the next line at Column A
+    ImGui::SetCursorPosY(micRowStartY + ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y);
 
     // Row: Live Mic Level meter and Sensitivity on the same row (Items 1.2, 1.3, 9)
     float micVU = m_engine.GetMicPeakVU();
