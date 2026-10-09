@@ -27,6 +27,9 @@ public:
 
     int GetIdealClientHeight() const;
 
+    bool IsAudioRoutingEnabled() const { return m_audioRoutingEnabled; }
+    void SetAudioRoutingEnabled(bool enabled) { m_audioRoutingEnabled = enabled; }
+
 private:
     void RenderHeader();
     void RenderChannel(const char* label, std::shared_ptr<AudioPipeline> pipeline, int& selectedDeviceIdx, int& selectedAppIdx);
@@ -41,7 +44,16 @@ private:
         int syncDelayMs = 0;
         std::shared_ptr<AudioPipeline> pipeline;
         ImVec4 accentColor = ImVec4(0.4f, 0.8f, 1.0f, 1.0f);
+
+        // Per-App Audio Routing
+        int appIdx = 0;              // 0 = "[All System Audio]", 1..N = app from m_activeAppSessions
+        DWORD routedAppPid = 0;
+        std::wstring routedAppName;  // e.g. L"spotify.exe"
     };
+
+    void RefreshAppSessionList();
+    void ApplyStreamAppRouting(size_t chIdx);
+    void SyncAllAppRouting();
 
     AudioEngine& m_engine;
     std::vector<AudioDevice> m_devices;
@@ -56,6 +68,8 @@ private:
     float m_volB = 0.85f;
     float m_masterVol = 1.0f;
     bool m_syncWindowsVol = true;
+    bool m_audioRoutingEnabled = false;
+    std::vector<AppAudioSession> m_activeAppSessions;
     bool m_micMonitorEnabled = false;
     int m_syncOffsetA = 0; // milliseconds
     int m_syncOffsetB = 40; // milliseconds

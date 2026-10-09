@@ -194,12 +194,10 @@ bool UI::Initialize(HWND hwnd, ID3D11Device* device, ID3D11DeviceContext* contex
 }
 
 int UI::GetIdealClientHeight() const {
-    // Non-streams elements (Header, Master Vol, Calibration, Terminal Log, Footer, margins & padding): ~385px
-    // Streams: m_channels.size() * (panelHeight (114) + spacing (8)) + addBtn (28) + spacing (8)
-    const float panelHeight = 114.0f;
+    const float panelHeight = m_audioRoutingEnabled ? 150.0f : 114.0f;
     const float addBtnHeight = 28.0f;
     const float itemSpacingY = 8.0f;
-    const float fixedOverhead = 390.0f;
+    const float fixedOverhead = m_audioRoutingEnabled ? 424.0f : 390.0f;
 
     float neededStreams = m_channels.size() * (panelHeight + itemSpacingY) + addBtnHeight + itemSpacingY;
     int idealH = static_cast<int>(std::ceil(fixedOverhead + neededStreams));
@@ -217,6 +215,9 @@ int UI::GetIdealClientHeight() const {
 void UI::Shutdown() {
     if (!m_initialized) return;
     m_engine.StopMicMonitor();
+    if (m_audioRoutingEnabled) {
+        m_engine.ClearAllAppRouting();
+    }
     SaveConfig();
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
@@ -293,6 +294,111 @@ void UI::RefreshInputDeviceList() {
     }
     if (m_selectedMicDevice >= 0 && m_selectedMicDevice < (int)m_inputDevices.size()) {
         m_engine.SelectMicDevice(m_inputDevices[m_selectedMicDevice].id);
+    }
+}
+
+void UI::RefreshAppSessionList() {
+    m_activeAppSessions = AudioEngine::EnumerateAudioSessions();
+
+    // Re-synchronize each channel's appIdx and routedAppPid from active sessions
+    for (size_t chIdx = 0; chIdx < m_channels.size(); ++chIdx) {
+        auto& chan = m_channels[chIdx];
+        if (chan.routedAppName.empty()) {
+            chan.appIdx = 0;
+            chan.routedAppPid = 0;
+            continue;
+        }
+
+        // Try to match by process name
+        int foundIdx = -1;
+        for (int i = 0; i < (int)m_activeAppSessions.size(); ++i) {
+            std::wstring sessionName = m_activeAppSessions[i].processName;
+            std::wstring targetName = chan.routedAppName;
+            std::transform(sessionName.begin(), sessionName.end(), sessionName.begin(), ::towlower);
+            std::transform(targetName.begin(), targetName.end(), targetName.begin(), ::towlower);
+
+            if (sessionName == targetName) {
+                foundIdx = i + 1; // 1-based index (0 is [All System Audio])
+                // Update PID if app restarted
+                if (chan.routedAppPid != m_activeAppSessions[i].pid) {
+                    chan.routedAppPid = m_activeAppSessions[i].pid;
+                    if (m_audioRoutingEnabled && !chan.deviceId.empty()) {
+                        m_engine.RouteAppToDevice(chan.routedAppPid, chan.deviceId);
+                    }
+                }
+                break;
+            }
+        }
+
+        if (foundIdx != -1) {
+            chan.appIdx = foundIdx;
+        } else {
+            // Process not in active session list right now
+            chan.appIdx = 0;
+        }
+    }
+}
+
+void UI::ApplyStreamAppRouting(size_t chIdx) {
+    if (chIdx >= m_channels.size()) return;
+    auto& chan = m_channels[chIdx];
+
+    if (!m_audioRoutingEnabled) return;
+
+    if (chan.appIdx == 0) {
+        if (chan.routedAppPid != 0) {
+            m_engine.ResetAppRouting(chan.routedAppPid);
+            AddTerminalLog("App route reset to Windows default for " + chan.label + ".");
+            chan.routedAppPid = 0;
+        }
+        chan.routedAppName.clear();
+        return;
+    }
+
+    size_t sessionIdx = chan.appIdx - 1;
+    if (sessionIdx < m_activeAppSessions.size()) {
+        const auto& session = m_activeAppSessions[sessionIdx];
+
+        // 1-to-1 routing enforcement:
+        // If this app was assigned to another stream, unassign it from that stream
+        for (size_t otherIdx = 0; otherIdx < m_channels.size(); ++otherIdx) {
+            if (otherIdx != chIdx) {
+                auto& otherChan = m_channels[otherIdx];
+                if (otherChan.routedAppPid == session.pid ||
+                    (!otherChan.routedAppName.empty() && otherChan.routedAppName == session.processName)) {
+                    otherChan.appIdx = 0;
+                    otherChan.routedAppPid = 0;
+                    otherChan.routedAppName.clear();
+                    AddTerminalLog("Unassigned '" + WStringToUTF8(session.displayName) + "' from " + otherChan.label + ".");
+                }
+            }
+        }
+
+        chan.routedAppPid = session.pid;
+        chan.routedAppName = session.processName;
+
+        if (!chan.deviceId.empty()) {
+            bool ok = m_engine.RouteAppToDevice(session.pid, chan.deviceId);
+            if (ok) {
+                AddTerminalLog("Routed '" + WStringToUTF8(session.displayName) + "' to " + chan.label + ".");
+            } else {
+                AddTerminalLog("Failed to route '" + WStringToUTF8(session.displayName) + "' (OS returned error).");
+            }
+        }
+    }
+}
+
+void UI::SyncAllAppRouting() {
+    if (!m_audioRoutingEnabled) {
+        m_engine.ClearAllAppRouting();
+        return;
+    }
+
+    for (size_t chIdx = 0; chIdx < m_channels.size(); ++chIdx) {
+        auto& chan = m_channels[chIdx];
+        if (chan.routedAppPid != 0 && !chan.deviceId.empty()) {
+            m_engine.RouteAppToDevice(chan.routedAppPid, chan.deviceId);
+        }
     }
 }
 
@@ -384,6 +490,7 @@ void UI::LoadConfig(const std::string& filename) {
             else if (key == "mic_gain") m_engine.SetMicGain(std::clamp(std::stof(val), 0.1f, 20.0f));
             else if (key == "always_minimize_to_tray") m_alwaysMinimizeToTray = (val == "1");
             else if (key == "dont_show_donation") m_dontShowDonationAgain = (val == "1");
+            else if (key == "audio_routing_enabled") m_audioRoutingEnabled = (val == "1");
             else if (key == "channels_count") {
                 int count = std::clamp(std::stoi(val), 2, 8);
                 static const ImVec4 s_accents[] = {
@@ -417,7 +524,16 @@ void UI::LoadConfig(const std::string& filename) {
                 if (p1 != std::string::npos) {
                     int cIdx = std::stoi(key.substr(5, p1 - 5));
                     std::string prop = key.substr(p1 + 1);
-                    if (cIdx >= 2 && cIdx < (int)m_channels.size()) {
+                    if (prop == "app_name") {
+                        int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, val.c_str(), (int)val.size(), NULL, 0);
+                        if (sizeNeeded > 0) {
+                            std::wstring wName(sizeNeeded, 0);
+                            MultiByteToWideChar(CP_UTF8, 0, val.c_str(), (int)val.size(), &wName[0], sizeNeeded);
+                            if (cIdx >= 0 && cIdx < (int)m_channels.size()) {
+                                m_channels[cIdx].routedAppName = wName;
+                            }
+                        }
+                    } else if (cIdx >= 2 && cIdx < (int)m_channels.size()) {
                         if (prop == "vol") m_channels[cIdx].volume = std::clamp(std::stof(val), 0.0f, 1.0f);
                         else if (prop == "delay") m_channels[cIdx].syncDelayMs = std::clamp(std::stoi(val), 0, 2000);
                         else if (prop == "dev_idx") m_channels[cIdx].deviceIdx = std::stoi(val);
@@ -476,6 +592,11 @@ void UI::LoadConfig(const std::string& filename) {
     if (m_selectedDeviceB < 0 || m_selectedDeviceB >= (int)m_devices.size()) {
         m_selectedDeviceB = (m_devices.size() > 1) ? 1 : 0;
     }
+
+    if (m_audioRoutingEnabled) {
+        RefreshAppSessionList();
+        SyncAllAppRouting();
+    }
 }
 
 void UI::SaveConfig(const std::string& filename) {
@@ -489,6 +610,7 @@ void UI::SaveConfig(const std::string& filename) {
     file << "sync_windows_vol=" << (m_syncWindowsVol ? "1" : "0") << "\n";
     file << "always_minimize_to_tray=" << (m_alwaysMinimizeToTray ? "1" : "0") << "\n";
     file << "dont_show_donation=" << (m_dontShowDonationAgain ? "1" : "0") << "\n";
+    file << "audio_routing_enabled=" << (m_audioRoutingEnabled ? "1" : "0") << "\n";
     file << "mic_preview=" << (m_micMonitorEnabled ? "1" : "0") << "\n";
     file << "sync_a=" << m_syncOffsetA << "\n";
     file << "sync_b=" << m_syncOffsetB << "\n";
@@ -507,6 +629,11 @@ void UI::SaveConfig(const std::string& filename) {
     file << "mic_gain=" << m_engine.GetMicGain() << "\n";
 
     file << "channels_count=" << m_channels.size() << "\n";
+    for (size_t i = 0; i < m_channels.size(); ++i) {
+        if (!m_channels[i].routedAppName.empty()) {
+            file << "chan_" << i << "_app_name=" << WStringToUTF8(m_channels[i].routedAppName) << "\n";
+        }
+    }
     for (size_t i = 2; i < m_channels.size(); ++i) {
         file << "chan_" << i << "_vol=" << m_channels[i].volume << "\n";
         file << "chan_" << i << "_delay=" << m_channels[i].syncDelayMs << "\n";
@@ -685,6 +812,13 @@ void UI::Render() {
         }
     }
 
+    // Periodic Audio Sessions enumeration (every 1.5 seconds if audio routing is enabled)
+    static auto lastSessionCheck = std::chrono::steady_clock::now();
+    if (m_audioRoutingEnabled && std::chrono::duration_cast<std::chrono::milliseconds>(now - lastSessionCheck).count() >= 1500) {
+        lastSessionCheck = now;
+        RefreshAppSessionList();
+    }
+
     // Master Volume Bar aligned with Column A
     ImGui::Text("Master Volume:");
     ImGui::SameLine();
@@ -711,12 +845,71 @@ void UI::Render() {
         ImGui::SetTooltip("When checked, laptop physical volume keys (Fn+Vol) and Windows taskbar slider automatically scale both audio streams.");
     }
 
+    // Per-App Audio Routing Top Controls Row
+    bool routingSupported = m_engine.IsAudioRoutingSupported();
+    if (!routingSupported) {
+        ImGui::BeginDisabled();
+    }
+    if (ImGui::Checkbox("Audio Routing", &m_audioRoutingEnabled)) {
+        if (m_audioRoutingEnabled) {
+            RefreshAppSessionList();
+            SyncAllAppRouting();
+            AddTerminalLog("Audio Routing enabled: assign apps to specific streams below.");
+        } else {
+            m_engine.ClearAllAppRouting();
+            for (auto& chan : m_channels) {
+                chan.appIdx = 0;
+                chan.routedAppPid = 0;
+                chan.routedAppName.clear();
+            }
+            AddTerminalLog("Audio Routing disabled: all apps reverted to Windows default.");
+        }
+        SaveConfig();
+    }
+    if (!routingSupported) {
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("Per-app audio routing is not supported on this Windows build.");
+        }
+    } else if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Direct individual applications to play through specific output streams (1-to-1 audio routing).");
+    }
+
+    ImGui::SameLine(colB_X);
+    if (m_audioRoutingEnabled) {
+        int routedCount = 0;
+        for (const auto& ch : m_channels) {
+            if (ch.routedAppPid != 0) routedCount++;
+        }
+        if (routedCount > 0) {
+            if (ImGui::SmallButton("Reset All App Routes")) {
+                m_engine.ClearAllAppRouting();
+                for (auto& chan : m_channels) {
+                    chan.appIdx = 0;
+                    chan.routedAppPid = 0;
+                    chan.routedAppName.clear();
+                }
+                AddTerminalLog("Reset all application audio routes back to Windows default.");
+                SaveConfig();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Clear all per-app routing assignments and revert applications to the Windows default device.");
+            }
+        } else {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("Select an app in any stream card below");
+        }
+    } else {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("All apps play through default audio");
+    }
+
     ImGui::Separator();
 
     // Dynamic Streams Region Height:
     // Snugly wraps stream cards when few channels exist (no dead gap),
     // and scrolls smoothly when extra streams exceed available space.
-    const float panelHeight = 114.0f;
+    const float panelHeight = m_audioRoutingEnabled ? 150.0f : 114.0f;
     const float addBtnHeight = 28.0f;
     const float itemSpacingY = ImGui::GetStyle().ItemSpacing.y;
     const float footerReservedHeight = 252.0f;
@@ -821,6 +1014,10 @@ void UI::Render() {
                         } else {
                             m_engine.SelectPipelineDevice(chan.pipeline, m_devices[d].id);
                         }
+                        if (m_audioRoutingEnabled && chan.routedAppPid != 0 && !chan.deviceId.empty()) {
+                            m_engine.RouteAppToDevice(chan.routedAppPid, chan.deviceId);
+                            AddTerminalLog("Re-routed " + WStringToUTF8(chan.routedAppName) + " to new device on " + chan.label + ".");
+                        }
                         SaveConfig();
                     }
                 }
@@ -872,6 +1069,75 @@ void UI::Render() {
             }
             ImGui::PopStyleColor(2);
 
+            // Row 3: Per-App Routing (Left) | Reset Route (Right) - only visible when Audio Routing is enabled
+            if (m_audioRoutingEnabled) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextDisabled("App:");
+                ImGui::SameLine(labelW);
+                ImGui::SetNextItemWidth(-1.0f);
+
+                std::string appComboId = "##AppCombo_" + std::to_string(chIdx);
+                std::string curAppLabel = "[All System Audio]";
+                if (chan.appIdx > 0 && (chan.appIdx - 1) < (int)m_activeAppSessions.size()) {
+                    curAppLabel = WStringToUTF8(m_activeAppSessions[chan.appIdx - 1].displayName);
+                } else if (!chan.routedAppName.empty()) {
+                    curAppLabel = WStringToUTF8(chan.routedAppName) + " [Offline]";
+                }
+
+                if (ImGui::BeginCombo(appComboId.c_str(), curAppLabel.c_str())) {
+                    bool isAllSelected = (chan.appIdx == 0 && chan.routedAppName.empty());
+                    if (ImGui::Selectable("[All System Audio]", isAllSelected)) {
+                        chan.appIdx = 0;
+                        ApplyStreamAppRouting(chIdx);
+                        SaveConfig();
+                    }
+
+                    for (int s = 0; s < (int)m_activeAppSessions.size(); ++s) {
+                        const auto& sess = m_activeAppSessions[s];
+                        bool isSelected = (chan.appIdx == (s + 1));
+
+                        int routedToOther = -1;
+                        for (size_t other = 0; other < m_channels.size(); ++other) {
+                            if (other != chIdx && (m_channels[other].routedAppPid == sess.pid || 
+                                (!m_channels[other].routedAppName.empty() && m_channels[other].routedAppName == sess.processName))) {
+                                routedToOther = static_cast<int>(other);
+                                break;
+                            }
+                        }
+
+                        std::string itemText = WStringToUTF8(sess.displayName);
+                        if (routedToOther != -1) {
+                            itemText += " -> (" + m_channels[routedToOther].label + ")";
+                        }
+
+                        if (ImGui::Selectable(itemText.c_str(), isSelected)) {
+                            chan.appIdx = s + 1;
+                            ApplyStreamAppRouting(chIdx);
+                            SaveConfig();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+
+                ImGui::TableSetColumnIndex(1);
+                ImGui::AlignTextToFramePadding();
+                if (chan.appIdx > 0 || !chan.routedAppName.empty()) {
+                    std::string clearBtnId = "Reset App Route##ClearApp_" + std::to_string(chIdx);
+                    if (ImGui::SmallButton(clearBtnId.c_str())) {
+                        chan.appIdx = 0;
+                        ApplyStreamAppRouting(chIdx);
+                        SaveConfig();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Clear this app routing and return to default audio");
+                    }
+                } else {
+                    ImGui::TextDisabled("Plays system audio");
+                }
+            }
+
             ImGui::EndTable();
         }
         ImGui::PopStyleVar(); // CellPadding
@@ -886,6 +1152,9 @@ void UI::Render() {
         if (m_channels[channelToRemove].pipeline) {
             m_engine.UnregisterPipeline(m_channels[channelToRemove].pipeline);
             m_channels[channelToRemove].pipeline->Shutdown();
+        }
+        if (m_channels[channelToRemove].routedAppPid != 0) {
+            m_engine.ResetAppRouting(m_channels[channelToRemove].routedAppPid);
         }
         m_channels.erase(m_channels.begin() + channelToRemove);
         SaveConfig();
@@ -1352,6 +1621,10 @@ void UI::Render() {
                 chan.pipeline->SetVolume(chan.volume);
                 chan.pipeline->SetDelayMs(chan.syncDelayMs);
             }
+        }
+        if (m_audioRoutingEnabled) {
+            RefreshAppSessionList();
+            SyncAllAppRouting();
         }
         AddTerminalLog("Backend reset: pipelines flushed and audio devices refreshed.");
     }

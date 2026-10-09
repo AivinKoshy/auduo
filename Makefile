@@ -8,7 +8,7 @@ CXXFLAGS = -std=c++20 -O3 -Wall -Wextra -DUNICODE -D_UNICODE \
 LDFLAGS = -static -static-libgcc -static-libstdc++ -mwindows \
           -ld3d11 -ld3dcompiler -ldwmapi -lgdi32 -lole32 -loleaut32 -lmmdevapi -luuid -lavrt -lksuser -lwinmm
 
-SRC_APP = src/main.cpp src/AudioEngine.cpp src/RingBuffer.cpp src/UI.cpp
+SRC_APP = src/main.cpp src/AudioEngine.cpp src/AudioPolicyManager.cpp src/RingBuffer.cpp src/UI.cpp
 SRC_IMGUI = third_party/imgui/imgui.cpp \
             third_party/imgui/imgui_draw.cpp \
             third_party/imgui/imgui_tables.cpp \
@@ -16,7 +16,7 @@ SRC_IMGUI = third_party/imgui/imgui.cpp \
             third_party/imgui/backends/imgui_impl_win32.cpp \
             third_party/imgui/backends/imgui_impl_dx11.cpp
 
-OBJ = build/main.o build/AudioEngine.o build/RingBuffer.o build/UI.o \
+OBJ = build/main.o build/AudioEngine.o build/AudioPolicyManager.o build/RingBuffer.o build/UI.o \
       build/imgui.o build/imgui_draw.o build/imgui_tables.o build/imgui_widgets.o \
       build/backend_win32.o build/backend_dx11.o build/resource.o
 

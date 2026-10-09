@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AudioDefines.hpp"
+#include "AudioPolicyManager.hpp"
 #include "RingBuffer.hpp"
 #include <thread>
 #include <mutex>
@@ -98,6 +99,15 @@ public:
 
     // Query active desktop audio sessions/processes
     static std::vector<std::pair<DWORD, std::wstring>> EnumerateAudioProcesses();
+
+    // Query active desktop audio sessions across all render devices
+    static std::vector<AppAudioSession> EnumerateAudioSessions();
+
+    // Per-App Audio Routing
+    bool RouteAppToDevice(DWORD pid, const std::wstring& deviceId);
+    bool ResetAppRouting(DWORD pid);
+    void ClearAllAppRouting();
+    bool IsAudioRoutingSupported() const;
 
     bool Initialize();
     void Shutdown();
@@ -242,6 +252,8 @@ private:
 
     mutable std::mutex m_extraPipelinesMutex;
     std::vector<std::shared_ptr<AudioPipeline>> m_extraPipelines;
+
+    AudioPolicyManager m_policyManager;
 
     void AttachWindowsVolumeEndpoint();
     void DetachWindowsVolumeEndpoint();

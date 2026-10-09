@@ -82,3 +82,25 @@
   - Target files strictly from canonical `main` (`include/AudioEngine.hpp`, `include/RingBuffer.hpp`, `src/AudioEngine.cpp`). Never feed `feat/skeuomorphic-gui`.
   - Assemble payloads under ~80k characters (~20k tokens) to prevent gateway timeouts or HTTP 502 errors.
   - Reusable helper scripts reside in `tools/` (e.g. `audit_main_core.py`, `audit_fable_focused.py`).
+
+---
+
+## 7. Per-App Audio Routing Architecture & Windows COM Ground Truth
+
+- **Feature Nomenclature:** **Per-App Audio Routing** (UI Label: `"Audio Routing"`).
+- **Core Mechanism:** Direct Windows OS COM activation via `combase.dll`:
+  - Activation string: `L"Windows.Media.Internal.AudioPolicyConfig"` via `RoGetActivationFactory`.
+  - Windows 11 IID: `{ab3d4648-e242-459f-b02f-541c70306324}`.
+  - Windows 10 IID: `{2a59116d-6c4f-45e0-a74f-707e3fef9258}`.
+  - VTable index 24: `SetPersistedDefaultAudioEndpoint(void* thisPtr, DWORD pid, DWORD flow, DWORD role, HSTRING deviceId)`.
+  - Passing valid endpoint string routes the application PID directly to that device with 0ms latency and 0% CPU.
+  - Passing `nullptr` / empty string immediately resets the app back to Windows default playback.
+- **Architectural Scope & Constraints:**
+  - **1-to-1 Mapping:** Each stream can have one pinned application, and selecting an app moves it exclusively to that stream.
+  - **UI Interaction Gate:** The per-stream "App:" combo box is conditionally rendered ONLY when the top `"Audio Routing"` toggle is ticked.
+  - **Dynamic Sizing & Cutoff Prevention:**
+    - Standard card height: `114.0f` (2 table rows: Device/Volume, VU/Delay).
+    - Audio Routing enabled card height: `150.0f` (Row 3 added: App Combo / Reset Button).
+    - `GetIdealClientHeight()` dynamically adapts between 670px and 776px, triggering native Win32 window resizing without internal scrollbars or layout clipping.
+- **Cleanup & Safety:**
+  - When the top toggle is unchecked or when AuDuo exits cleanly, all active per-app routes are automatically reset back to Windows default so apps are not left stranded on disconnected hardware endpoints.

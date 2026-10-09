@@ -55,9 +55,11 @@ struct StreamMetrics {
     std::atomic<int> latencyMs{0};
 };
 
-enum class CaptureMode {
-    SystemMirror,    // Captures all system audio, excluding Auduo itself
-    ProcessSpecific  // Loopback targeting a specific process ID
+struct AppAudioSession {
+    DWORD pid = 0;
+    std::wstring processName;     // e.g. L"Spotify.exe"
+    std::wstring displayName;     // e.g. L"Spotify"
+    std::wstring currentDeviceId; // currently assigned endpoint ID if redirected
 };
 
 } // namespace Auduo

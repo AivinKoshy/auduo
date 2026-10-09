@@ -24,3 +24,4 @@ tools/
 *.user
 *.suo
 .idea/
+scratch/

@@ -92,9 +92,24 @@ int RunSmokeTest() {
         return 1;
     }
 
-    // Run 10 frames of UI rendering
-    for (int i = 0; i < 10; ++i) {
+    // Explicitly test with routing disabled first
+    ui.SetAudioRoutingEnabled(false);
+    for (int i = 0; i < 5; ++i) {
         ui.Render();
+    }
+    int hOff = ui.GetIdealClientHeight();
+
+    // Explicitly test with routing enabled
+    ui.SetAudioRoutingEnabled(true);
+    for (int i = 0; i < 5; ++i) {
+        ui.Render();
+    }
+    int hOn = ui.GetIdealClientHeight();
+
+    std::cout << "[Auduo Smoke Test] Client height: OFF = " << hOff << "px, ON = " << hOn << "px" << std::endl;
+    if (hOn <= hOff) {
+        std::cerr << "[Auduo Smoke Test] Height did not expand for routing dropdowns!" << std::endl;
+        return 1;
     }
 
     ui.Shutdown();
@@ -151,6 +166,18 @@ int main(int argc, char* argv[]) {
             return Auduo::AudioEngine::RunTestCapture(duration);
         } else if (arg == "--smoke-test") {
             return RunSmokeTest();
+        } else if (arg == "--test-routing") {
+            Auduo::AudioEngine engine;
+            engine.Initialize();
+            bool supported = engine.IsAudioRoutingSupported();
+            std::cout << "[Test Routing] Audio Policy Routing Supported: " << (supported ? "YES" : "NO") << std::endl;
+            auto sessions = Auduo::AudioEngine::EnumerateAudioSessions();
+            std::cout << "[Test Routing] Active Audio Sessions (" << sessions.size() << "):" << std::endl;
+            for (const auto& s : sessions) {
+                std::wcout << L"  - PID " << s.pid << L": " << s.processName << L" (" << s.displayName << L")" << std::endl;
+            }
+            engine.Shutdown();
+            return 0;
         } else if (arg == "--test-calib") {
             return Auduo::AudioEngine::RunTestCalibration();
         } else if (arg == "--test-autosync") {

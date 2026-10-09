@@ -13,6 +13,7 @@
 #include <ksmedia.h>
 #include <timeapi.h>
 #include <condition_variable>
+#include <unordered_set>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -786,6 +787,109 @@ std::vector<std::pair<DWORD, std::wstring>> AudioEngine::EnumerateAudioProcesses
     pEnum->Release();
     if (shouldUninit) CoUninitialize();
     return processes;
+}
+
+std::vector<AppAudioSession> AudioEngine::EnumerateAudioSessions() {
+    std::vector<AppAudioSession> sessions;
+    std::unordered_set<DWORD> seenPids;
+    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    bool shouldUninit = SUCCEEDED(hr);
+
+    IMMDeviceEnumerator* pEnum = nullptr;
+    hr = CoCreateInstance(
+        __uuidof(MMDeviceEnumerator), NULL, CLSCTX_ALL,
+        __uuidof(IMMDeviceEnumerator), (void**)&pEnum
+    );
+    if (FAILED(hr) || !pEnum) {
+        if (shouldUninit) CoUninitialize();
+        return sessions;
+    }
+
+    IMMDeviceCollection* pCol = nullptr;
+    hr = pEnum->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &pCol);
+    if (SUCCEEDED(hr) && pCol) {
+        UINT devCount = 0;
+        pCol->GetCount(&devCount);
+        for (UINT d = 0; d < devCount; ++d) {
+            IMMDevice* pDev = nullptr;
+            if (SUCCEEDED(pCol->Item(d, &pDev)) && pDev) {
+                LPWSTR devId = nullptr;
+                pDev->GetId(&devId);
+                std::wstring curDevId = devId ? devId : L"";
+                if (devId) CoTaskMemFree(devId);
+
+                IAudioSessionManager2* pMgr = nullptr;
+                if (SUCCEEDED(pDev->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, NULL, (void**)&pMgr)) && pMgr) {
+                    IAudioSessionEnumerator* pSessionEnum = nullptr;
+                    if (SUCCEEDED(pMgr->GetSessionEnumerator(&pSessionEnum)) && pSessionEnum) {
+                        int sessionCount = 0;
+                        pSessionEnum->GetCount(&sessionCount);
+                        for (int i = 0; i < sessionCount; ++i) {
+                            IAudioSessionControl* pControl = nullptr;
+                            if (SUCCEEDED(pSessionEnum->GetSession(i, &pControl)) && pControl) {
+                                IAudioSessionControl2* pControl2 = nullptr;
+                                if (SUCCEEDED(pControl->QueryInterface(__uuidof(IAudioSessionControl2), (void**)&pControl2)) && pControl2) {
+                                    DWORD pid = 0;
+                                    pControl2->GetProcessId(&pid);
+                                    if (pid != 0 && pid != GetCurrentProcessId() && !pControl2->IsSystemSoundsSession() && seenPids.find(pid) == seenPids.end()) {
+                                        AudioSessionState state = AudioSessionStateInactive;
+                                        pControl2->GetState(&state);
+                                        if (state != AudioSessionStateExpired) {
+                                            HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+                                            WCHAR processName[MAX_PATH] = L"Unknown App";
+                                            if (hProcess) {
+                                                DWORD size = MAX_PATH;
+                                                QueryFullProcessImageNameW(hProcess, 0, processName, &size);
+                                                CloseHandle(hProcess);
+                                            }
+                                            std::wstring nameOnly = processName;
+                                            size_t slashPos = nameOnly.find_last_of(L"\\/");
+                                            if (slashPos != std::wstring::npos) {
+                                                nameOnly = nameOnly.substr(slashPos + 1);
+                                            }
+
+                                            LPWSTR dispName = nullptr;
+                                            pControl2->GetDisplayName(&dispName);
+                                            std::wstring dName = (dispName && wcslen(dispName) > 0) ? dispName : nameOnly;
+                                            if (dispName) CoTaskMemFree(dispName);
+
+                                            sessions.push_back({ pid, nameOnly, dName, curDevId });
+                                            seenPids.insert(pid);
+                                        }
+                                    }
+                                    pControl2->Release();
+                                }
+                                pControl->Release();
+                            }
+                        }
+                        pSessionEnum->Release();
+                    }
+                    pMgr->Release();
+                }
+                pDev->Release();
+            }
+        }
+        pCol->Release();
+    }
+    pEnum->Release();
+    if (shouldUninit) CoUninitialize();
+    return sessions;
+}
+
+bool AudioEngine::RouteAppToDevice(DWORD pid, const std::wstring& deviceId) {
+    return m_policyManager.SetAppOutputDevice(pid, deviceId);
+}
+
+bool AudioEngine::ResetAppRouting(DWORD pid) {
+    return m_policyManager.ResetAppToDefault(pid);
+}
+
+void AudioEngine::ClearAllAppRouting() {
+    m_policyManager.ClearAllActiveRoutes();
+}
+
+bool AudioEngine::IsAudioRoutingSupported() const {
+    return m_policyManager.IsSupported();
 }
 
 static const GUID GUID_AuduoVolumeContext = 
