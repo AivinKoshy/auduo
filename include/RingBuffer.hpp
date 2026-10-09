@@ -31,7 +31,8 @@ public:
 
         const size_t writeIdx = m_writeIndex.load(std::memory_order_relaxed);
         const size_t readIdx = m_readIndex.load(std::memory_order_acquire);
-        const size_t usedFrames = (writeIdx >= readIdx) ? (writeIdx - readIdx) : 0;
+        // Guard against overflow: in a valid SPSC buffer writeIdx >= readIdx always holds
+        const size_t usedFrames = (writeIdx >= readIdx) ? (writeIdx - readIdx) : m_capacityFrames;
         const size_t availableFrames = (m_capacityFrames > usedFrames) ? (m_capacityFrames - usedFrames) : 0;
 
         const size_t toWrite = (std::min)(frames, availableFrames);
@@ -56,6 +57,14 @@ public:
     // Read samples (returns number of frames actually read; fills remaining with silence)
     size_t Read(float* destination, size_t frames) {
         if (!destination || frames == 0) return 0;
+
+        // Check if an asynchronous clear was requested (e.g. from UI or calibration)
+        if (m_requestClear.exchange(false, std::memory_order_acq_rel)) {
+            const size_t w = m_writeIndex.load(std::memory_order_acquire);
+            m_readIndex.store(w, std::memory_order_release);
+            std::fill_n(destination, frames * m_channels, 0.0f);
+            return 0;
+        }
 
         const size_t writeIdx = m_writeIndex.load(std::memory_order_acquire);
         const size_t readIdx = m_readIndex.load(std::memory_order_relaxed);
@@ -98,10 +107,9 @@ public:
         return m_capacityFrames - AvailableRead();
     }
 
-    // Discard all buffered frames
+    // Discard all buffered frames safely from consumer (or request clean reset)
     void Clear() {
-        const size_t writeIdx = m_writeIndex.load(std::memory_order_relaxed);
-        m_readIndex.store(writeIdx, std::memory_order_release);
+        m_requestClear.store(true, std::memory_order_release);
     }
 
     // Artificially seek/shift delay offset in frames without heap allocations
@@ -141,6 +149,7 @@ private:
 
     alignas(64) std::atomic<size_t> m_writeIndex{0};
     alignas(64) std::atomic<size_t> m_readIndex{0};
+    alignas(64) std::atomic<bool> m_requestClear{false};
 };
 
 } // namespace Auduo

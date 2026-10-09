@@ -63,6 +63,7 @@ private:
     std::mutex m_pushMutex;
 
     std::atomic<bool> m_running{false};
+    std::atomic<bool> m_isShutdown{true};
     std::atomic<bool> m_deviceError{false};
     std::atomic<float> m_volume{1.0f};
     std::atomic<float> m_masterVolume{1.0f};
@@ -132,6 +133,7 @@ public:
     void ClearExtraPipelines();
     std::vector<std::shared_ptr<AudioPipeline>> GetExtraPipelines() const;
     std::vector<std::shared_ptr<AudioPipeline>> GetAllPipelines() const;
+    void ForEachPipeline(const std::function<void(const std::shared_ptr<AudioPipeline>&)>& fn) const;
     std::shared_ptr<AudioPipeline> GetPipelineByIndex(size_t index) const;
 
     // Play high-precision synchronized test chime across all active output pipelines

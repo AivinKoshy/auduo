@@ -276,14 +276,18 @@ bool AudioPipeline::Initialize(const std::wstring& endpointDeviceId) {
     }
 
     // Start background render thread
-    m_running.store(true, std::memory_order_relaxed);
+    m_isShutdown.store(false, std::memory_order_release);
+    m_running.store(true, std::memory_order_release);
     m_renderThread = std::thread(&AudioPipeline::RenderLoop, this);
 
     return true;
 }
 
 void AudioPipeline::Shutdown() {
-    m_running.store(false, std::memory_order_relaxed);
+    if (m_isShutdown.exchange(true, std::memory_order_acq_rel)) {
+        return; // Already cleanly shut down, prevent double-free and join exceptions
+    }
+    m_running.store(false, std::memory_order_release);
     if (m_hRenderEvent) {
         SetEvent(m_hRenderEvent);
     }
@@ -909,14 +913,6 @@ void AudioEngine::Shutdown() {
         m_calibrationThread.join();
     }
     StopStreaming();
-    if (m_pipelineA) m_pipelineA->Shutdown();
-    if (m_pipelineB) m_pipelineB->Shutdown();
-    {
-        std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
-        for (auto& pipe : m_extraPipelines) {
-            if (pipe) pipe->Shutdown();
-        }
-    }
     CoUninitialize();
 }
 
@@ -1106,14 +1102,9 @@ void AudioEngine::SetMasterVolume(float vol) {
     }
 
     float effective = m_isMuted.load(std::memory_order_relaxed) ? 0.0f : vol;
-    if (m_pipelineA) m_pipelineA->SetMasterVolume(effective);
-    if (m_pipelineB) m_pipelineB->SetMasterVolume(effective);
-    {
-        std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
-        for (auto& pipe : m_extraPipelines) {
-            if (pipe) pipe->SetMasterVolume(effective);
-        }
-    }
+    ForEachPipeline([effective](const std::shared_ptr<AudioPipeline>& pipe) {
+        if (pipe) pipe->SetMasterVolume(effective);
+    });
 
     if (m_syncWithWindowsVolume.load(std::memory_order_relaxed)) {
         if (!m_pDefaultEndpointVolume) {
@@ -1136,6 +1127,10 @@ void AudioEngine::RegisterPipeline(std::shared_ptr<AudioPipeline> pipeline) {
 
 void AudioEngine::UnregisterPipeline(std::shared_ptr<AudioPipeline> pipeline) {
     if (!pipeline) return;
+    // Safely stop background playback thread before removing references
+    if (pipeline->IsRunning()) {
+        pipeline->Shutdown();
+    }
     std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
     auto it = std::find(m_extraPipelines.begin(), m_extraPipelines.end(), pipeline);
     if (it != m_extraPipelines.end()) {
@@ -1144,8 +1139,15 @@ void AudioEngine::UnregisterPipeline(std::shared_ptr<AudioPipeline> pipeline) {
 }
 
 void AudioEngine::ClearExtraPipelines() {
-    std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
-    m_extraPipelines.clear();
+    {
+        std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
+        for (auto& pipe : m_extraPipelines) {
+            if (pipe && pipe->IsRunning()) {
+                pipe->Shutdown();
+            }
+        }
+        m_extraPipelines.clear();
+    }
 }
 
 std::vector<std::shared_ptr<AudioPipeline>> AudioEngine::GetExtraPipelines() const {
@@ -1164,6 +1166,16 @@ std::vector<std::shared_ptr<AudioPipeline>> AudioEngine::GetAllPipelines() const
         }
     }
     return list;
+}
+
+void AudioEngine::ForEachPipeline(const std::function<void(const std::shared_ptr<AudioPipeline>&)>& fn) const {
+    if (!fn) return;
+    if (m_pipelineA) fn(m_pipelineA);
+    if (m_pipelineB) fn(m_pipelineB);
+    std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
+    for (const auto& pipe : m_extraPipelines) {
+        if (pipe) fn(pipe);
+    }
 }
 
 std::shared_ptr<AudioPipeline> AudioEngine::GetPipelineByIndex(size_t index) const {
@@ -1208,22 +1220,47 @@ bool AudioEngine::StartStreaming() {
     if (m_isStreaming.load(std::memory_order_relaxed)) return true;
 
     // Initialize playback pipelines
-    if (m_pipelineA && !m_pipelineA->Initialize(m_deviceIdA)) {
-        std::wcerr << L"[Auduo] Failed to initialize Pipeline A on: " << m_deviceIdA << std::endl;
+    bool pipeAOk = false;
+    bool pipeBOk = false;
+    size_t extraOkCount = 0;
+
+    if (m_pipelineA && !m_deviceIdA.empty()) {
+        pipeAOk = m_pipelineA->Initialize(m_deviceIdA);
+        if (!pipeAOk) {
+            std::wcerr << L"[Auduo] Failed to initialize Pipeline A on: " << m_deviceIdA << std::endl;
+        }
     }
-    if (m_pipelineB && !m_pipelineB->Initialize(m_deviceIdB)) {
-        std::wcerr << L"[Auduo] Failed to initialize Pipeline B on: " << m_deviceIdB << std::endl;
+    if (m_pipelineB && !m_deviceIdB.empty()) {
+        pipeBOk = m_pipelineB->Initialize(m_deviceIdB);
+        if (!pipeBOk) {
+            std::wcerr << L"[Auduo] Failed to initialize Pipeline B on: " << m_deviceIdB << std::endl;
+        }
     }
 
     {
         std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
         for (auto& pipe : m_extraPipelines) {
             if (pipe && !pipe->GetDeviceId().empty()) {
-                if (!pipe->Initialize(pipe->GetDeviceId())) {
+                if (pipe->Initialize(pipe->GetDeviceId())) {
+                    extraOkCount++;
+                } else {
                     std::wcerr << L"[Auduo] Failed to initialize extra pipeline " << pipe->GetName() << L" on: " << pipe->GetDeviceId() << std::endl;
                 }
             }
         }
+    }
+
+    // If zero pipelines succeeded, roll back and abort cleanly
+    if (!pipeAOk && !pipeBOk && extraOkCount == 0) {
+        if (m_pipelineA) m_pipelineA->Shutdown();
+        if (m_pipelineB) m_pipelineB->Shutdown();
+        {
+            std::lock_guard<std::mutex> lock(m_extraPipelinesMutex);
+            for (auto& pipe : m_extraPipelines) {
+                if (pipe) pipe->Shutdown();
+            }
+        }
+        return false;
     }
 
     // Apply Smart Auto-Sync offset across all active pipelines if enabled and all are at 0ms delay
@@ -1318,6 +1355,7 @@ void AudioEngine::PlayTestBeep() {
         beepData[i * 2 + 1] = sample;
     }
 
+    m_playingBeep.store(true, std::memory_order_release);
     auto allPipes = GetAllPipelines();
     std::vector<std::shared_ptr<AudioPipeline>> startedPipes;
 
@@ -1333,14 +1371,13 @@ void AudioEngine::PlayTestBeep() {
         }
     }
 
-    if (!startedPipes.empty()) {
-        std::thread([startedPipes]() {
-            Sleep(400);
-            for (auto& p : startedPipes) {
-                if (p) p->Shutdown();
-            }
-        }).detach();
-    }
+    std::thread([this, startedPipes]() {
+        Sleep(350);
+        m_playingBeep.store(false, std::memory_order_release);
+        for (auto& p : startedPipes) {
+            if (p) p->Shutdown();
+        }
+    }).detach();
 }
 
 void AudioEngine::CaptureLoop() {
@@ -1396,12 +1433,8 @@ void AudioEngine::CaptureLoop() {
     }
 
     // WASAPI Loopback Initialization
-    // We exclude our own process from loopback to eliminate any echo loop
-    AUDCLNT_PROCESS_LOOPBACK_PARAMS loopbackParams = {};
-    loopbackParams.TargetProcessId = GetCurrentProcessId();
-    loopbackParams.ProcessLoopbackMode = PROCESS_LOOPBACK_MODE_EXCLUDE_PROCESS_TREE;
-    (void)loopbackParams;
-
+    // Self-capture echo prevention is handled cleanly via software gating (m_playingBeep / m_isCalibrating)
+    // to ensure 100% compatibility across all Windows 10/11 desktop environments without AppX packaging requirements.
     DWORD streamFlags = AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
 
     hr = m_pCaptureClient->Initialize(
@@ -1494,7 +1527,7 @@ void AudioEngine::CaptureLoop() {
         }
 
         if (m_hCaptureEvent && (streamFlags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK)) {
-            WaitForSingleObject(m_hCaptureEvent, 20);
+            WaitForSingleObject(m_hCaptureEvent, 10);
         } else {
             Sleep(10);
         }
@@ -1503,6 +1536,11 @@ void AudioEngine::CaptureLoop() {
 
         UINT32 packetLength = 0;
         hr = m_pCaptureService->GetNextPacketSize(&packetLength);
+        if (SUCCEEDED(hr) && packetLength == 0) {
+            // No packet ready on this wake, yield smoothly
+            Sleep(1);
+            continue;
+        }
         while (SUCCEEDED(hr) && packetLength > 0) {
             BYTE* pData = nullptr;
             UINT32 numFramesAvailable = 0;
@@ -1543,8 +1581,10 @@ void AudioEngine::CaptureLoop() {
                     }
                 }
 
-                // Push captured audio into output pipelines (paused during acoustic calibration or metronome sync test)
-                if (!m_isCalibrating.load(std::memory_order_relaxed) && !m_metronomeRunning.load(std::memory_order_relaxed)) {
+                // Push captured audio into output pipelines (paused during internal beep, acoustic calibration, or metronome sync test)
+                if (!m_playingBeep.load(std::memory_order_relaxed) &&
+                    !m_isCalibrating.load(std::memory_order_relaxed) &&
+                    !m_metronomeRunning.load(std::memory_order_relaxed)) {
                     if (m_pipelineA && m_pipelineA->IsRunning()) {
                         m_pipelineA->PushAudio(floatConversionBuffer.data(), numFramesAvailable, sampleRate, channels);
                     }
