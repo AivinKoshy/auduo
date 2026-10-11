@@ -197,12 +197,13 @@ int UI::GetIdealClientHeight() const {
     const float panelHeight = m_audioRoutingEnabled ? 150.0f : 114.0f;
     const float addBtnHeight = 28.0f;
     const float itemSpacingY = 8.0f;
-    const float fixedOverhead = m_audioRoutingEnabled ? 424.0f : 390.0f;
+    const float fixedOverhead = 386.0f;
 
-    float neededStreams = m_channels.size() * (panelHeight + itemSpacingY) + addBtnHeight + itemSpacingY;
+    size_t visibleStreams = (std::min)(m_channels.size(), static_cast<size_t>(3));
+    float neededStreams = visibleStreams * (panelHeight + itemSpacingY) + addBtnHeight + itemSpacingY;
     int idealH = static_cast<int>(std::ceil(fixedOverhead + neededStreams));
 
-    // Cap to work area height minus safety margin if available, or minimum 650
+    // Cap to work area height minus safety margin if available, or minimum 620
     RECT workArea;
     if (SystemParametersInfoA(SPI_GETWORKAREA, 0, &workArea, 0)) {
         int maxWorkH = (workArea.bottom - workArea.top) - 80;
@@ -490,7 +491,6 @@ void UI::LoadConfig(const std::string& filename) {
             else if (key == "mic_gain") m_engine.SetMicGain(std::clamp(std::stof(val), 0.1f, 20.0f));
             else if (key == "always_minimize_to_tray") m_alwaysMinimizeToTray = (val == "1");
             else if (key == "dont_show_donation") m_dontShowDonationAgain = (val == "1");
-            else if (key == "audio_routing_enabled") m_audioRoutingEnabled = (val == "1");
             else if (key == "channels_count") {
                 int count = std::clamp(std::stoi(val), 2, 8);
                 static const ImVec4 s_accents[] = {
@@ -524,16 +524,7 @@ void UI::LoadConfig(const std::string& filename) {
                 if (p1 != std::string::npos) {
                     int cIdx = std::stoi(key.substr(5, p1 - 5));
                     std::string prop = key.substr(p1 + 1);
-                    if (prop == "app_name") {
-                        int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, val.c_str(), (int)val.size(), NULL, 0);
-                        if (sizeNeeded > 0) {
-                            std::wstring wName(sizeNeeded, 0);
-                            MultiByteToWideChar(CP_UTF8, 0, val.c_str(), (int)val.size(), &wName[0], sizeNeeded);
-                            if (cIdx >= 0 && cIdx < (int)m_channels.size()) {
-                                m_channels[cIdx].routedAppName = wName;
-                            }
-                        }
-                    } else if (cIdx >= 2 && cIdx < (int)m_channels.size()) {
+                    if (cIdx >= 2 && cIdx < (int)m_channels.size()) {
                         if (prop == "vol") m_channels[cIdx].volume = std::clamp(std::stof(val), 0.0f, 1.0f);
                         else if (prop == "delay") m_channels[cIdx].syncDelayMs = std::clamp(std::stoi(val), 0, 2000);
                         else if (prop == "dev_idx") m_channels[cIdx].deviceIdx = std::stoi(val);
@@ -593,10 +584,8 @@ void UI::LoadConfig(const std::string& filename) {
         m_selectedDeviceB = (m_devices.size() > 1) ? 1 : 0;
     }
 
-    if (m_audioRoutingEnabled) {
-        RefreshAppSessionList();
-        SyncAllAppRouting();
-    }
+    // Always start with Audio Routing turned off at startup
+    m_audioRoutingEnabled = false;
 }
 
 void UI::SaveConfig(const std::string& filename) {
@@ -708,45 +697,48 @@ void UI::Render() {
     const float colWidth = (ImGui::GetContentRegionAvail().x - colSpacing) * 0.5f;
     const float colB_X = colStartX + colWidth + colSpacing;
 
-    // Row 1: Button on the left (Column A), Status on the right (Column B)
+    // Row 1: Merged Streaming / Virtual Cable Button (Column A) | Master Volume Slider (Column B)
     const float streamBtnHeight = 32.0f;
     float row1StartY = ImGui::GetCursorPosY();
     bool streaming = m_engine.IsStreaming();
     if (!streaming) {
         if (!cableDefault) {
             ImGui::BeginDisabled();
-        }
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.60f, 0.25f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.75f, 0.32f, 1.0f));
-        if (ImGui::Button("  START STREAMING  ", ImVec2(colWidth, streamBtnHeight))) {
-            if (!m_devices.empty()) {
-                for (size_t i = 0; i < m_channels.size(); ++i) {
-                    if (m_channels[i].deviceIdx >= 0 && m_channels[i].deviceIdx < (int)m_devices.size()) {
-                        m_channels[i].deviceId = m_devices[m_channels[i].deviceIdx].id;
-                    }
-                    if (i == 0 && !m_channels[i].deviceId.empty()) {
-                        m_engine.SelectDeviceA(m_channels[i].deviceId);
-                    } else if (i == 1 && !m_channels[i].deviceId.empty()) {
-                        m_engine.SelectDeviceB(m_channels[i].deviceId);
-                    } else if (m_channels[i].pipeline && !m_channels[i].deviceId.empty()) {
-                        m_channels[i].pipeline->SetDeviceId(m_channels[i].deviceId);
-                    }
-                    if (m_channels[i].pipeline) {
-                        m_channels[i].pipeline->SetVolume(m_channels[i].volume);
-                        m_channels[i].pipeline->SetDelayMs(m_channels[i].syncDelayMs);
-                    }
-                }
-            }
-            m_engine.SetMirrorSystemAudio(true);
-            m_engine.StartStreaming();
-            AddTerminalLog("Audio streaming started. Mirroring system audio across active streams.");
-        }
-        ImGui::PopStyleColor(2);
-        if (!cableDefault) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.24f, 0.28f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.24f, 0.28f, 1.0f));
+            ImGui::Button("  Switch PC Output to Virtual Cable  ", ImVec2(colWidth, streamBtnHeight));
+            ImGui::PopStyleColor(2);
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Set 'CABLE Input' as your Windows Default Playback Device to enable streaming.");
+                ImGui::SetTooltip("VB-Audio Virtual Cable is not set as your Windows Default Playback Device.\nPlease set 'CABLE Input' as default in Windows Sound settings to enable streaming.");
             }
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.60f, 0.25f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.75f, 0.32f, 1.0f));
+            if (ImGui::Button("  START STREAMING  ", ImVec2(colWidth, streamBtnHeight))) {
+                if (!m_devices.empty()) {
+                    for (size_t i = 0; i < m_channels.size(); ++i) {
+                        if (m_channels[i].deviceIdx >= 0 && m_channels[i].deviceIdx < (int)m_devices.size()) {
+                            m_channels[i].deviceId = m_devices[m_channels[i].deviceIdx].id;
+                        }
+                        if (i == 0 && !m_channels[i].deviceId.empty()) {
+                            m_engine.SelectDeviceA(m_channels[i].deviceId);
+                        } else if (i == 1 && !m_channels[i].deviceId.empty()) {
+                            m_engine.SelectDeviceB(m_channels[i].deviceId);
+                        } else if (m_channels[i].pipeline && !m_channels[i].deviceId.empty()) {
+                            m_channels[i].pipeline->SetDeviceId(m_channels[i].deviceId);
+                        }
+                        if (m_channels[i].pipeline) {
+                            m_channels[i].pipeline->SetVolume(m_channels[i].volume);
+                            m_channels[i].pipeline->SetDelayMs(m_channels[i].syncDelayMs);
+                        }
+                    }
+                }
+                m_engine.SetMirrorSystemAudio(true);
+                m_engine.StartStreaming();
+                AddTerminalLog("Audio streaming started. Mirroring system audio across active streams.");
+            }
+            ImGui::PopStyleColor(2);
         }
     } else {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.20f, 0.20f, 1.0f));
@@ -756,31 +748,6 @@ void UI::Render() {
             AddTerminalLog("Audio streaming stopped.");
         }
         ImGui::PopStyleColor(2);
-    }
-
-    // Column B: Status LED aligned with Column B (starting at colB_X, vertically centered with button)
-    float ledFrameH = ImGui::GetFrameHeight();
-    float ledYOffset = (streamBtnHeight - ledFrameH) * 0.5f;
-    ImGui::SetCursorPos(ImVec2(colB_X, row1StartY + ledYOffset));
-    if (cableDefault) {
-        DrawLED(true, "Virtual Cable Ready",
-                "VB-Audio Virtual Cable is connected and set as the Windows Default Playback Device.",
-                ImVec4(0.25f, 0.90f, 0.45f, 1.0f),
-                ImVec4(0.95f, 0.25f, 0.25f, 1.0f));
-    } else {
-        DrawLED(false, "Virtual Cable Not Connected",
-                "VB-Audio Virtual Cable is not set as your Windows Default Playback Device.\nPlease set 'CABLE Input' as default in Windows Sound settings to enable streaming.",
-                ImVec4(0.25f, 0.90f, 0.45f, 1.0f),
-                ImVec4(0.95f, 0.25f, 0.25f, 1.0f));
-    }
-    ImGui::SetCursorPosY(row1StartY + streamBtnHeight + ImGui::GetStyle().ItemSpacing.y);
-
-    ImGui::Spacing();
-    ImGui::Separator();
-
-    // Grey out the rest of the application controls if streaming hasn't been started
-    if (!streaming) {
-        ImGui::BeginDisabled();
     }
 
     // Periodic Windows Volume Sync check (every ~30ms for instant Fn key responsiveness)
@@ -819,12 +786,22 @@ void UI::Render() {
         RefreshAppSessionList();
     }
 
-    // Master Volume Bar aligned with Column A
+    // Grey out the rest of the application controls if streaming hasn't been started
+    if (!streaming) {
+        ImGui::BeginDisabled();
+    }
+
+    // Column B on Row 1: Master Volume Slider aligned with Column B, vertically centered with button
+    float mvFrameH = ImGui::GetFrameHeight();
+    float mvYOffset = (streamBtnHeight - mvFrameH) * 0.5f;
+    ImGui::SetCursorPos(ImVec2(colB_X, row1StartY + mvYOffset));
+    ImGui::AlignTextToFramePadding();
     ImGui::Text("Master Volume:");
     ImGui::SameLine();
     float mvSliderStart = ImGui::GetCursorPosX();
-    float mvSliderWidth = colWidth - (mvSliderStart - colStartX) - 52.0f;
-    if (mvSliderWidth < 120.0f) mvSliderWidth = 120.0f;
+    float mvMutedReserve = m_engine.IsMuted() ? 64.0f : 0.0f;
+    float mvSliderWidth = (colB_X + colWidth) - mvSliderStart - mvMutedReserve;
+    if (mvSliderWidth < 100.0f) mvSliderWidth = 100.0f;
     ImGui::SetNextItemWidth(mvSliderWidth);
     int masterPercent = static_cast<int>(std::round(m_engine.GetMasterVolume() * 100.0f));
     if (ImGui::SliderInt("##MasterVol", &masterPercent, 0, 100, "%d%%")) {
@@ -836,16 +813,18 @@ void UI::Render() {
         ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "[MUTED]");
     }
 
-    // Checkbox aligned directly with Column B
-    ImGui::SameLine(colB_X);
+    ImGui::SetCursorPosY(row1StartY + streamBtnHeight + ImGui::GetStyle().ItemSpacing.y);
+
+    // Row 2: Two Checkboxes (Column A: Sync with PC Volume Keys | Column B: Audio Routing)
     if (ImGui::Checkbox("Sync with PC Volume Keys", &m_syncWindowsVol)) {
         m_engine.SetSyncWithWindowsVolume(m_syncWindowsVol);
+        SaveConfig();
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("When checked, laptop physical volume keys (Fn+Vol) and Windows taskbar slider automatically scale both audio streams.");
     }
 
-    // Per-App Audio Routing Top Controls Row
+    ImGui::SameLine(colB_X);
     bool routingSupported = m_engine.IsAudioRoutingSupported();
     if (!routingSupported) {
         ImGui::BeginDisabled();
@@ -875,46 +854,17 @@ void UI::Render() {
         ImGui::SetTooltip("Direct individual applications to play through specific output streams (1-to-1 audio routing).");
     }
 
-    ImGui::SameLine(colB_X);
-    if (m_audioRoutingEnabled) {
-        int routedCount = 0;
-        for (const auto& ch : m_channels) {
-            if (ch.routedAppPid != 0) routedCount++;
-        }
-        if (routedCount > 0) {
-            if (ImGui::SmallButton("Reset All App Routes")) {
-                m_engine.ClearAllAppRouting();
-                for (auto& chan : m_channels) {
-                    chan.appIdx = 0;
-                    chan.routedAppPid = 0;
-                    chan.routedAppName.clear();
-                }
-                AddTerminalLog("Reset all application audio routes back to Windows default.");
-                SaveConfig();
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Clear all per-app routing assignments and revert applications to the Windows default device.");
-            }
-        } else {
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextDisabled("Select an app in any stream card below");
-        }
-    } else {
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("All apps play through default audio");
-    }
-
     ImGui::Separator();
 
     // Dynamic Streams Region Height:
-    // Snugly wraps stream cards when few channels exist (no dead gap),
-    // and scrolls smoothly when extra streams exceed available space.
+    // Automatically expands for up to 3 streams max, and scrolls smoothly for 4+ streams.
     const float panelHeight = m_audioRoutingEnabled ? 150.0f : 114.0f;
     const float addBtnHeight = 28.0f;
     const float itemSpacingY = ImGui::GetStyle().ItemSpacing.y;
     const float footerReservedHeight = 252.0f;
 
-    float neededStreamsHeight = m_channels.size() * (panelHeight + itemSpacingY) + addBtnHeight + itemSpacingY;
+    size_t visibleStreams = (std::min)(m_channels.size(), static_cast<size_t>(3));
+    float neededStreamsHeight = visibleStreams * (panelHeight + itemSpacingY) + addBtnHeight + itemSpacingY;
     float maxStreamsHeight = ImGui::GetContentRegionAvail().y - footerReservedHeight;
     if (maxStreamsHeight < 120.0f) maxStreamsHeight = 120.0f;
 

@@ -37,6 +37,7 @@ static ID3D11RenderTargetView*  g_mainRenderTargetView = nullptr;
 static NOTIFYICONDATAW          g_nid = {};
 static const UINT               WM_TRAYICON = WM_USER + 1;
 static bool                     g_alwaysMinimizeToTray = false;
+static int                      g_lockedWindowWidth = 0;
 
 bool CreateDeviceD3D(HWND hWnd);
 void CleanupDeviceD3D();
@@ -207,14 +208,15 @@ int main(int argc, char* argv[]) {
 
     const int clientWidth = 840;
     const int clientHeight = 605;
-    DWORD winStyle = WS_OVERLAPPEDWINDOW;
+    DWORD winStyle = WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX;
     RECT wr = { 0, 0, clientWidth, clientHeight };
     AdjustWindowRect(&wr, winStyle, FALSE);
+    g_lockedWindowWidth = wr.right - wr.left;
 
     HWND hwnd = CreateWindowW(
         wc.lpszClassName, L"AuDuo - Dual Audio Mirroring & Sync",
         winStyle,
-        150, 100, wr.right - wr.left, wr.bottom - wr.top,
+        150, 100, g_lockedWindowWidth, wr.bottom - wr.top,
         nullptr, nullptr, wc.hInstance, nullptr
     );
 
@@ -401,7 +403,9 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_GETMINMAXINFO: {
         LPMINMAXINFO lpMMI = (LPMINMAXINFO)lParam;
-        lpMMI->ptMinTrackSize.x = 780;
+        int w = (g_lockedWindowWidth > 0) ? g_lockedWindowWidth : 856;
+        lpMMI->ptMinTrackSize.x = w;
+        lpMMI->ptMaxTrackSize.x = w;
         lpMMI->ptMinTrackSize.y = 500;
         return 0;
     }
