@@ -194,22 +194,24 @@ bool UI::Initialize(HWND hwnd, ID3D11Device* device, ID3D11DeviceContext* contex
 }
 
 int UI::GetIdealClientHeight() const {
-    const float panelHeight = m_audioRoutingEnabled ? 150.0f : 114.0f;
-    const float addBtnHeight = 28.0f;
-    const float itemSpacingY = 8.0f;
-    const float fixedOverhead = 386.0f;
+    int idealH = m_measuredClientHeight;
+    if (idealH <= 0) {
+        const float panelHeight = m_audioRoutingEnabled ? 138.0f : 106.0f;
+        const float addBtnHeight = 28.0f;
+        const float itemSpacingY = 8.0f;
+        const float fixedOverhead = 353.0f;
 
-    size_t visibleStreams = (std::min)(m_channels.size(), static_cast<size_t>(3));
-    float neededStreams = visibleStreams * (panelHeight + itemSpacingY) + addBtnHeight + itemSpacingY;
-    int idealH = static_cast<int>(std::ceil(fixedOverhead + neededStreams));
+        size_t visibleStreams = (std::min)(m_channels.size(), static_cast<size_t>(3));
+        float neededStreams = visibleStreams * (panelHeight + itemSpacingY) + addBtnHeight;
+        idealH = static_cast<int>(std::ceil(fixedOverhead + neededStreams));
+    }
 
-    // Cap to work area height minus safety margin if available, or minimum 620
+    // Cap to work area height minus safety margin if available
     RECT workArea;
     if (SystemParametersInfoA(SPI_GETWORKAREA, 0, &workArea, 0)) {
         int maxWorkH = (workArea.bottom - workArea.top) - 24;
         if (idealH > maxWorkH) idealH = maxWorkH;
     }
-    if (idealH < 620) idealH = 620;
     return idealH;
 }
 
@@ -779,19 +781,13 @@ void UI::Render() {
 
     // Dynamic Streams Region Height:
     // Automatically expands for up to 3 streams max, and scrolls smoothly for 4+ streams.
-    const float panelHeight = m_audioRoutingEnabled ? 150.0f : 114.0f;
+    const float panelHeight = m_audioRoutingEnabled ? 138.0f : 106.0f;
     const float addBtnHeight = 28.0f;
     const float itemSpacingY = ImGui::GetStyle().ItemSpacing.y;
-    const float footerReservedHeight = 252.0f;
 
     size_t visibleStreams = (std::min)(m_channels.size(), static_cast<size_t>(3));
-    float neededStreamsHeight = visibleStreams * (panelHeight + itemSpacingY) + addBtnHeight + itemSpacingY;
-    float maxStreamsHeight = ImGui::GetContentRegionAvail().y - footerReservedHeight;
-    if (maxStreamsHeight < 120.0f) maxStreamsHeight = 120.0f;
-
-    float streamAreaHeight = (m_channels.size() <= 3)
-                                 ? neededStreamsHeight
-                                 : (std::min)(neededStreamsHeight, maxStreamsHeight);
+    float neededStreamsHeight = visibleStreams * (panelHeight + itemSpacingY) + addBtnHeight;
+    float streamAreaHeight = neededStreamsHeight;
 
     // Dedicated Scrollable Streams Region (Header & Footer remain pinned)
     // For 2 or 3 streams, the window resizes to show all streams without scrolling.
@@ -1039,7 +1035,6 @@ void UI::Render() {
     }
 
     // Full-width sleek "+ Add Stream Device" card button matching stream cards
-    ImGui::Spacing();
     const float addBtnWidth = fullWidth;
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
@@ -1532,6 +1527,10 @@ void UI::Render() {
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Support AuDuo open-source development (UPI, Cards & International)");
     }
+
+    // Record exact pixel bottom of footer + bottom window padding so window fits with zero chin
+    float exactContentBottom = ImGui::GetCursorPosY() - ImGui::GetStyle().ItemSpacing.y + ImGui::GetStyle().WindowPadding.y;
+    m_measuredClientHeight = static_cast<int>(std::ceil(exactContentBottom));
 
     ImGui::End();
 

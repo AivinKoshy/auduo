@@ -79,6 +79,7 @@ private:
     bool m_dontShowDonationAgain = false;
     bool m_firstFrame = true;
     bool m_initialized = false;
+    int m_measuredClientHeight = 0;
 
     // Simultaneous Dual-Channel Auto-Sync tracking
     int m_autoSyncDelta = 0;
