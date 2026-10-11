@@ -311,8 +311,17 @@ int main(int argc, char* argv[]) {
             GetClientRect(hwnd, &curClientRect);
             int borderDecorationH = (curWindowRect.bottom - curWindowRect.top) - (curClientRect.bottom - curClientRect.top);
             int newTotalH = idealH + borderDecorationH;
-            SetWindowPos(hwnd, nullptr, 0, 0, curWindowRect.right - curWindowRect.left, newTotalH,
-                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            int newX = curWindowRect.left;
+            int newY = curWindowRect.top;
+            UINT posFlags = SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE;
+            RECT workArea;
+            if (SystemParametersInfoA(SPI_GETWORKAREA, 0, &workArea, 0)) {
+                if (newY + newTotalH > workArea.bottom) {
+                    newY = (std::max)(static_cast<int>(workArea.top), static_cast<int>(workArea.bottom) - newTotalH);
+                    posFlags = SWP_NOZORDER | SWP_NOACTIVATE;
+                }
+            }
+            SetWindowPos(hwnd, nullptr, newX, newY, curWindowRect.right - curWindowRect.left, newTotalH, posFlags);
         }
 
         ui.Render();

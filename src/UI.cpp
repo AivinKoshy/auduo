@@ -206,7 +206,7 @@ int UI::GetIdealClientHeight() const {
     // Cap to work area height minus safety margin if available, or minimum 620
     RECT workArea;
     if (SystemParametersInfoA(SPI_GETWORKAREA, 0, &workArea, 0)) {
-        int maxWorkH = (workArea.bottom - workArea.top) - 80;
+        int maxWorkH = (workArea.bottom - workArea.top) - 24;
         if (idealH > maxWorkH) idealH = maxWorkH;
     }
     if (idealH < 620) idealH = 620;
@@ -491,68 +491,6 @@ void UI::LoadConfig(const std::string& filename) {
             else if (key == "mic_gain") m_engine.SetMicGain(std::clamp(std::stof(val), 0.1f, 20.0f));
             else if (key == "always_minimize_to_tray") m_alwaysMinimizeToTray = (val == "1");
             else if (key == "dont_show_donation") m_dontShowDonationAgain = (val == "1");
-            else if (key == "channels_count") {
-                int count = std::clamp(std::stoi(val), 2, 8);
-                static const ImVec4 s_accents[] = {
-                    ImVec4(0.40f, 0.90f, 0.60f, 1.0f), // Mint Green
-                    ImVec4(0.95f, 0.45f, 0.85f, 1.0f), // Magenta
-                    ImVec4(0.95f, 0.85f, 0.35f, 1.0f), // Gold
-                    ImVec4(0.45f, 0.65f, 1.00f, 1.0f)  // Azure
-                };
-                while ((int)m_channels.size() < count) {
-                    size_t chIdx = m_channels.size();
-                    char streamLetter = static_cast<char>('A' + chIdx);
-                    StreamChannel chan;
-                    chan.label = std::string("Stream ") + streamLetter;
-                    chan.deviceIdx = (m_devices.size() > chIdx) ? static_cast<int>(chIdx) : 0;
-                    if (chan.deviceIdx >= 0 && chan.deviceIdx < (int)m_devices.size()) {
-                        chan.deviceId = m_devices[chan.deviceIdx].id;
-                    }
-                    chan.volume = 0.80f;
-                    chan.syncDelayMs = 0;
-                    chan.accentColor = s_accents[(chIdx - 2) % 4];
-                    std::wstring wPipeName = L"STREAM " + std::wstring(1, streamLetter);
-                    chan.pipeline = std::make_shared<AudioPipeline>(wPipeName);
-                    chan.pipeline->SetDeviceId(chan.deviceId);
-                    m_engine.RegisterPipeline(chan.pipeline);
-                    m_channels.push_back(chan);
-                }
-            }
-            else if (key.rfind("chan_", 0) == 0) {
-                // Format: chan_<idx>_<prop>
-                size_t p1 = key.find('_', 5);
-                if (p1 != std::string::npos) {
-                    int cIdx = std::stoi(key.substr(5, p1 - 5));
-                    std::string prop = key.substr(p1 + 1);
-                    if (cIdx >= 2 && cIdx < (int)m_channels.size()) {
-                        if (prop == "vol") m_channels[cIdx].volume = std::clamp(std::stof(val), 0.0f, 1.0f);
-                        else if (prop == "delay") m_channels[cIdx].syncDelayMs = std::clamp(std::stoi(val), 0, 2000);
-                        else if (prop == "dev_idx") m_channels[cIdx].deviceIdx = std::stoi(val);
-                        else if (prop == "dev_id") {
-                            int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, val.c_str(), (int)val.size(), NULL, 0);
-                            if (sizeNeeded > 0) {
-                                std::wstring wId(sizeNeeded, 0);
-                                MultiByteToWideChar(CP_UTF8, 0, val.c_str(), (int)val.size(), &wId[0], sizeNeeded);
-                                m_channels[cIdx].deviceId = wId;
-                                if (m_channels[cIdx].pipeline) {
-                                    m_channels[cIdx].pipeline->SetDeviceId(wId);
-                                }
-                                bool foundDev = false;
-                                for (int d = 0; d < (int)m_devices.size(); ++d) {
-                                    if (m_devices[d].id == wId) {
-                                        m_channels[cIdx].deviceIdx = d;
-                                        foundDev = true;
-                                        break;
-                                    }
-                                }
-                                if (!foundDev) {
-                                    m_channels[cIdx].deviceIdx = -1;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         } catch (...) {
             // Ignore malformed individual config lines safely
         }
@@ -616,23 +554,6 @@ void UI::SaveConfig(const std::string& filename) {
         file << "mic_device_id=" << WStringToUTF8(m_inputDevices[m_selectedMicDevice].id) << "\n";
     }
     file << "mic_gain=" << m_engine.GetMicGain() << "\n";
-
-    file << "channels_count=" << m_channels.size() << "\n";
-    for (size_t i = 0; i < m_channels.size(); ++i) {
-        if (!m_channels[i].routedAppName.empty()) {
-            file << "chan_" << i << "_app_name=" << WStringToUTF8(m_channels[i].routedAppName) << "\n";
-        }
-    }
-    for (size_t i = 2; i < m_channels.size(); ++i) {
-        file << "chan_" << i << "_vol=" << m_channels[i].volume << "\n";
-        file << "chan_" << i << "_delay=" << m_channels[i].syncDelayMs << "\n";
-        file << "chan_" << i << "_dev_idx=" << m_channels[i].deviceIdx << "\n";
-        if (!m_channels[i].deviceId.empty()) {
-            file << "chan_" << i << "_dev_id=" << WStringToUTF8(m_channels[i].deviceId) << "\n";
-        } else if (m_channels[i].deviceIdx >= 0 && m_channels[i].deviceIdx < (int)m_devices.size()) {
-            file << "chan_" << i << "_dev_id=" << WStringToUTF8(m_devices[m_channels[i].deviceIdx].id) << "\n";
-        }
-    }
 }
 
 // Custom vector hardware LED widget (draws crisp circular LED with halo, bypassing font glyph issues)
@@ -868,11 +789,18 @@ void UI::Render() {
     float maxStreamsHeight = ImGui::GetContentRegionAvail().y - footerReservedHeight;
     if (maxStreamsHeight < 120.0f) maxStreamsHeight = 120.0f;
 
-    float streamAreaHeight = (std::min)(neededStreamsHeight, maxStreamsHeight);
+    float streamAreaHeight = (m_channels.size() <= 3)
+                                 ? neededStreamsHeight
+                                 : (std::min)(neededStreamsHeight, maxStreamsHeight);
 
     // Dedicated Scrollable Streams Region (Header & Footer remain pinned)
+    // For 2 or 3 streams, the window resizes to show all streams without scrolling.
+    // For 4+ streams, internal vertical scrolling is enabled.
+    ImGuiWindowFlags streamsRegionFlags = (m_channels.size() <= 3)
+                                              ? (ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)
+                                              : ImGuiWindowFlags_None;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    ImGui::BeginChild("StreamsScrollRegion", ImVec2(0, streamAreaHeight), false, ImGuiWindowFlags_None);
+    ImGui::BeginChild("StreamsScrollRegion", ImVec2(0, streamAreaHeight), false, streamsRegionFlags);
 
     const float fullWidth = ImGui::GetContentRegionAvail().x;
     const float labelW = 68.0f;
@@ -1175,6 +1103,9 @@ void UI::Render() {
         }
         m_channels.push_back(newChan);
         SaveConfig();
+        if (m_channels.size() > 3) {
+            ImGui::SetScrollHereY(1.0f);
+        }
     }
     ImGui::PopStyleColor(4);
     ImGui::PopStyleVar(2);
