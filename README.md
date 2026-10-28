@@ -161,7 +161,7 @@ AuDuo is made possible thanks to these excellent open-source projects and audio 
 
 If AuDuo helped you share movies, music, or gaming sessions without audio sync issues, consider supporting the project:
 
-- 💖 **[Support AuDuo & Donate](https://aivinkoshy.github.io/auduo/donate/)** (UPI & International Payment Options)
+- 💖 **[Support AuDuo & Donate](https://getauduo.vercel.app/#support)** (UPI & International Payment Options)
 - ⭐ Star the repository on GitHub to help others find it!
 
 ---

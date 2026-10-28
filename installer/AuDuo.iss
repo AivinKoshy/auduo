@@ -43,12 +43,11 @@ Source: "..\bin\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\ROADMAP.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\docs\donate\*"; DestDir: "{app}\docs\donate"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\resources\auduo.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\auduo.ico"
-Name: "{group}\Support & Donate"; Filename: "{app}\docs\donate\index.html"
+Name: "{group}\Support & Donate"; Filename: "https://getauduo.vercel.app/#support"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\auduo.ico"; Tasks: desktopicon
 
