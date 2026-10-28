@@ -4,11 +4,11 @@
 
 # AuDuo
 
-### Dual Audio Output & Sync for Windows
+### Multi-Device Audio Output & Sync for Windows
 
 ![AuDuo Preview](preview_app_live.png)
 
-*Play your PC audio through two pairs of headphones or speakers at the same time, with easy delay calibration so both stay in sync.*
+*Play your PC audio through two or more pairs of headphones or speakers at the same time, with easy delay calibration so all outputs stay in sync.*
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(x64)-0078D6.svg?logo=windows)](https://microsoft.com/windows)
@@ -40,7 +40,8 @@ By default, Windows doesn't allow streaming audio to two separate playback devic
 ## Features
 
 - **Built Completely in Modern C++:** 100% native C++20 desktop application—no Electron, no web views, and no heavy runtime dependencies.
-- **Dual Device Playback:** Stream audio to two output devices simultaneously (Bluetooth headphones, wired headsets, or external speakers).
+- **Multi-Device Playback (N-Device Support):** Stream audio to 2, 3, or more output devices simultaneously (Bluetooth headphones, wired headsets, USB audio interfaces, or external speakers).
+- **Dynamic Responsive UI:** Smoothly resizes the application window to fit up to 3 streams naturally, switching to internal scrolling for additional outputs.
 - **Auto-Sync Calibration:** Play quick test sounds and use your laptop or webcam microphone to automatically measure the delay between devices and sync them up.
 - **Manual Delay Adjustment:** Fine-tune audio delay (0–500 ms) using a simple slider.
 - **Sync Clapper:** Trigger a periodic click sound to easily check by ear if both headphones are aligned.
@@ -59,7 +60,7 @@ By default, Windows doesn't allow streaming audio to two separate playback devic
 
 ### Quick Guide
 1. Launch `auduo.exe`.
-2. Select your first device under **Stream A** and your second device under **Stream B**.
+2. Select your audio devices under **Stream A** and **Stream B** (or click **+ Add Audio Stream** to output to 3+ devices simultaneously).
 3. Click **START STREAMING**.
 4. Play any audio on your computer.
 5. If one device lags behind the other:

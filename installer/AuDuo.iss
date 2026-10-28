@@ -5,7 +5,7 @@
 ; =====================================================================
 
 #define MyAppName "AuDuo"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "Aivin Koshy"
 #define MyAppURL "https://github.com/AivinKoshy/auduo"
 #define MyAppExeName "auduo.exe"
@@ -23,7 +23,7 @@ DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 LicenseFile=..\LICENSE
 OutputDir=..\dist
-OutputBaseFilename=AuDuo_Setup_v1.0.0
+OutputBaseFilename=AuDuo_Setup_v1.1.0
 SetupIconFile=..\resources\auduo.ico
 Compression=lzma2/ultra64
 SolidCompression=yes

@@ -1,6 +1,14 @@
 # AuDuo Project Roadmap & Milestone Tracker
 
-## 📌 v1.0.0 — The Initial Stable Release (Current)
+## 📌 v1.1.0 — Multi-Device Expansion & UI Polish (Current)
+Focused on expanding AuDuo from 2 devices to arbitrary N-device simultaneous mirroring with dynamic UI auto-resizing.
+
+- [x] **N-Device Output Engine:** Scalable multi-pipeline WASAPI playback engine streaming to 2, 3, or more audio outputs simultaneously.
+- [x] **Dynamic Responsive Windowing:** Automatically expands window height for up to 3 streams, with smooth internal scrolling for additional channels and zero bottom chin padding.
+- [x] **Hardened Real-Time Concurrency:** Atomic ring buffer clears, zero dynamic allocations in real-time WASAPI audio callbacks, and safe pipeline lifecycle teardowns.
+- [x] **Integrated Streaming Status Control:** Unified streaming state indicator with real-time feedback and streamlined master volume placement.
+
+## 📌 v1.0.0 — The Initial Stable Release
 Focused on rock-solid, low-latency **Dual Audio Mirroring & Acoustic Auto-Sync** for Windows.
 
 - [x] **Core WASAPI Dual Mirroring Engine:** Lock-free ring buffer architecture cloning system audio to two independent output endpoints simultaneously.

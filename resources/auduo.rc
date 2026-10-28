@@ -8,8 +8,8 @@
 
 // Version Information
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     1,0,0,0
-PRODUCTVERSION  1,0,0,0
+FILEVERSION     1,1,0,0
+PRODUCTVERSION  1,1,0,0
 FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
 FILEFLAGS       0
 FILEOS          VOS__WINDOWS32
@@ -21,13 +21,13 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName",      "Aivin Koshy"
-            VALUE "FileDescription",  "AuDuo - Dual Audio Mirroring & Auto-Sync"
-            VALUE "FileVersion",      "1.0.0.0"
+            VALUE "FileDescription",  "AuDuo - Multi-Device Audio Mirroring & Auto-Sync"
+            VALUE "FileVersion",      "1.1.0.0"
             VALUE "InternalName",     "auduo"
             VALUE "LegalCopyright",   "Copyright (c) 2026 Aivin Koshy"
             VALUE "OriginalFilename", "auduo.exe"
             VALUE "ProductName",      "AuDuo"
-            VALUE "ProductVersion",   "1.0.0.0"
+            VALUE "ProductVersion",   "1.1.0.0"
         END
     END
     BLOCK "VarFileInfo"
