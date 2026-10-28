@@ -13,35 +13,8 @@
 namespace Auduo {
 
 static void OpenDonationPage() {
-    // 1. Try docs folder relative to executable directory
-    char exePath[MAX_PATH];
-    if (GetModuleFileNameA(NULL, exePath, MAX_PATH) > 0) {
-        char* lastSlash = strrchr(exePath, '\\');
-        if (lastSlash) *(lastSlash + 1) = '\0';
-        std::string exeDoc = std::string(exePath) + "..\\docs\\donate\\index.html";
-        DWORD attr = GetFileAttributesA(exeDoc.c_str());
-        if (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY)) {
-            ShellExecuteA(NULL, "open", exeDoc.c_str(), NULL, NULL, SW_SHOWNORMAL);
-            return;
-        }
-        std::string sameDirDoc = std::string(exePath) + "docs\\donate\\index.html";
-        attr = GetFileAttributesA(sameDirDoc.c_str());
-        if (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY)) {
-            ShellExecuteA(NULL, "open", sameDirDoc.c_str(), NULL, NULL, SW_SHOWNORMAL);
-            return;
-        }
-    }
-
-    // 2. Try current working directory
-    const char* cwdDoc = "docs\\donate\\index.html";
-    DWORD attr = GetFileAttributesA(cwdDoc);
-    if (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY)) {
-        ShellExecuteA(NULL, "open", cwdDoc, NULL, NULL, SW_SHOWNORMAL);
-        return;
-    }
-
-    // 3. Fallback to official online donation page (or repository)
-    ShellExecuteA(NULL, "open", "https://aivinkoshy.github.io/auduo/donate/", NULL, NULL, SW_SHOWNORMAL);
+    // Directly open the canonical live production website support section
+    ShellExecuteA(NULL, "open", "https://getauduo.vercel.app/#support", NULL, NULL, SW_SHOWNORMAL);
 }
 
 // Helper to convert wstring to utf8 string
